@@ -32,7 +32,7 @@ compactor_thinking = "low"
 web_search = "gpt-5.4-mini"
 
 [memory]
-# One chat that never ends (docs/optchat-spec.md). Sizes in bytes; the spec's values.
+# One chat that never ends (the OptChat spec, https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449). Sizes in bytes; the spec's values.
 enabled = true
 view_max = 128000
 view_min = 64000

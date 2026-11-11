@@ -1,4 +1,4 @@
-// OptChat (docs/optchat-spec.md): one chat that never ends. The log and the tree live in the Store; this
+// OptChat (the OptChat spec, https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449): one chat that never ends. The log and the tree live in the Store; this
 // class ingests the conversation's messages, builds tree nodes in the background (compactions), keeps the
 // chat view and the compaction view, and gives each turn [system] [view] [message].
 import { createHash } from "node:crypto";

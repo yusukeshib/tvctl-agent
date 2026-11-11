@@ -1,4 +1,4 @@
-// The system prompt of turns and compactions: OptChat's prompt verbatim (docs/optchat-spec.md §5), with
+// The system prompt of turns and compactions: OptChat's prompt verbatim (the OptChat spec, https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449 §5), with
 // the agent renamed and the paragraph on computers dropped (no device tools), then the user's instructions.
 
 export const AGENT_NAME = "Remo";

@@ -42,7 +42,7 @@ export type Config = {
 		/** pi's credential file, shared with its file lock (OAuth tokens are refreshed in place). */
 		piAuth: string;
 	};
-	/** OptChat memory (docs/optchat-spec.md); sizes in bytes. */
+	/** OptChat memory (the OptChat spec, https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449); sizes in bytes. */
 	memory: {
 		enabled: boolean;
 		viewMax: number;

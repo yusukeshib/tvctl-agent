@@ -43,7 +43,7 @@ While the agent speaks, `tvctl duck` lowers the player (`speech.duck_level`).
 ## Memory
 
 One chat that never ends, as in the OptChat design
-([docs/optchat-spec.md](docs/optchat-spec.md), from
+(from
 [Taelin's gist](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)).
 Every message (your words, replies, tool calls and results) is logged in
 `optchat.sqlite` next to the pi-durable store and compressed in the background
