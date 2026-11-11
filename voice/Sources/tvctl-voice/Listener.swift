@@ -202,6 +202,14 @@ final class Listener: @unchecked Sendable {
         guard out.frameLength > 0 else { return }
         let start = CMTime(value: samples, timescale: CMTimeScale(format.sampleRate))
         samples += Int64(out.frameLength)
+        // While we speak (and shortly after), the mic hears our own voice: transcribe silence instead.
+        if SelfSpeech.active() {
+            for c in 0..<Int(format.channelCount) {
+                out.floatChannelData?[c].update(repeating: 0, count: Int(out.frameLength))
+            }
+            continuation.yield(AnalyzerInput(buffer: out, bufferStartTime: start))
+            return
+        }
         continuation.yield(AnalyzerInput(buffer: out, bufferStartTime: start))
         detectSpeech(buffer, end: CMTime(value: samples, timescale: CMTimeScale(format.sampleRate)))
     }

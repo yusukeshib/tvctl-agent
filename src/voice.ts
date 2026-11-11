@@ -16,17 +16,34 @@ export type Utterance = {
 /** Assembles transcripts into utterances: only text heard between speech_start and finalized counts. */
 export class UtteranceAssembler {
 	private open: { id: number; startedAt: number; parts: string[] } | undefined;
+	/** Finalized with no text yet: the transcript can arrive just after `finalized`. */
+	private closing: { startedAt: number; finalizedAt: number } | undefined;
+
+	/** True while waiting for a late transcript; call `expire()` after `lateMs`. */
+	get waiting(): boolean {
+		return this.closing !== undefined;
+	}
+
+	expire(): void {
+		this.closing = undefined;
+	}
 
 	/** Returns a finished utterance, or undefined. */
 	push(event: VoiceEvent): Utterance | undefined {
 		switch (event.type) {
 			case "speech_start":
+				this.closing = undefined;
 				// A new start while one is open (no finalized yet) continues the same utterance.
 				if (this.open === undefined) this.open = { id: Number(event.utterance), startedAt: event.t, parts: [] };
 				else this.open.id = Number(event.utterance);
 				return undefined;
 			case "final": {
 				const text = String(event.text ?? "").trim();
+				if (this.open === undefined && this.closing !== undefined && text !== "") {
+					const { startedAt } = this.closing;
+					this.closing = undefined;
+					return { text, startedAt, finalAt: event.t };
+				}
 				if (this.open === undefined) {
 					if (text !== "") log("voice", `dropped transcript outside speech: ${text}`);
 					return undefined;
@@ -39,7 +56,11 @@ export class UtteranceAssembler {
 				const { startedAt, parts } = this.open;
 				this.open = undefined;
 				const text = parts.join(" ").trim();
-				return text === "" ? undefined : { text, startedAt, finalAt: event.t };
+				if (text === "") {
+					this.closing = { startedAt, finalizedAt: event.t };
+					return undefined;
+				}
+				return { text, startedAt, finalAt: event.t };
 			}
 			default:
 				return undefined;
@@ -111,6 +132,7 @@ export class Voice {
 		}
 		const utterance = this.assembler.push(event);
 		if (utterance !== undefined) this.onUtterance(utterance);
+		else if (event.type === "finalized" && this.assembler.waiting) setTimeout(() => this.assembler.expire(), 400);
 	}
 
 	private send(command: object): void {
