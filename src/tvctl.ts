@@ -114,15 +114,17 @@ export function createTvctlExtension(run: TvctlRun) {
 		defineTool({
 			name: "search_media",
 			description:
-				"Search YouTube or Spotify for something to play; returns titles with URLs for play. Spotify kind: track, album, artist, playlist, episode or show (omit for a mix; artist plays their top songs).",
+				"Search a service for something to play; returns titles with URLs for play. Spotify kind: track, album, artist, playlist, episode or show (omit for a mix; artist plays their top songs). primevideo searches amazon.com; jp_store=true searches amazon.co.jp (Japanese account). A Netflix or Prime title URL plays like its Play button (a series continues its current episode).",
 			parameters: obj({
-				service: oneOf(["youtube", "spotify"]),
+				service: oneOf(["youtube", "spotify", "netflix", "primevideo", "crunchyroll"]),
 				query: str(),
 				kind: opt(oneOf(["track", "album", "artist", "playlist", "episode", "show"])),
+				jp_store: opt(oneOf([true, false])),
 			}),
 			execute: async (args) => {
 				const argv = ["search", args.service, args.query, "--limit", "6"];
 				if (args.kind && args.service === "spotify") argv.push("--kind", args.kind);
+				if (args.jp_store === true && args.service === "primevideo") argv.push("--site", "jp");
 				return text(await call(run, argv, condenseSearch));
 			},
 		}),
