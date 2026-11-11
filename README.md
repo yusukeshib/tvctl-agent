@@ -12,9 +12,12 @@ Work in progress. macOS 26 or later on Apple silicon.
 ## Parts
 
 - `voice/`: `tvctl-voice`, a Swift helper. It captures the configured input
-  device, transcribes it on device with Apple's SpeechAnalyzer, and speaks
+  device, detects utterances, streams their audio, and plays the spoken
   replies. JSON lines on stdin/stdout.
-- `src/`: the agent daemon (Node.js, TypeScript).
+- `src/`: the agent daemon (Node.js, TypeScript). Speech goes through OpenAI's
+  Realtime API: `gpt-live-transcribe` for what you say, `gpt-realtime-2.1-mini`
+  reading the answers (`OPENAI_API_KEY`, from the environment or your login
+  shell).
 - `scripts/bench-models.ts`: measures how fast candidate models pick the right
   tool for typical commands.
 

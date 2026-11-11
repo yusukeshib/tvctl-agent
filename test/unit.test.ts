@@ -2,65 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseConfig } from "../src/config.ts";
 import { condense, condenseSearch } from "../src/tvctl.ts";
-import { SegmentJoiner, type Utterance, UtteranceAssembler, type VoiceEvent } from "../src/voice.ts";
+import { isSpeech } from "../src/voice.ts";
 
-test("joiner: cloud transcript first, Apple's as the alternative; silence hallucinations dropped", async () => {
-	const out: Utterance[] = [];
-	const j = new SegmentJoiner(0, (u) => out.push(u));
-	j.start(1, 0);
-	j.apple("宇多田ヒカルを Spotifyで再生して。");
-	j.cloud(1, Promise.resolve("歌田光をSpotifyで再生して。"));
-	j.finalized(1, 900);
-	j.start(2, 1000);
-	j.cloud(2, Promise.resolve("ご視聴ありがとうございました。"));
-	j.finalized(2, 1500);
-	j.start(3, 2000);
-	j.apple("止めて");
-	j.cloud(3, Promise.resolve(undefined));
-	j.finalized(3, 2500);
-	await new Promise((r) => setTimeout(r, 20));
-	assert.deepEqual(
-		out.map((u) => [u.text, u.alternative]),
-		[
-			["歌田光をSpotifyで再生して。", "宇多田ヒカルを Spotifyで再生して。"],
-			["止めて", undefined],
-		],
-	);
-});
-
-const ev = (type: string, t: number, fields: Record<string, unknown> = {}): VoiceEvent => ({ type, t, ...fields });
-
-test("an utterance is the finals between speech_start and its finalized", () => {
-	const a = new UtteranceAssembler();
-	assert.equal(a.push(ev("speech_start", 0, { utterance: 1 })), undefined);
-	assert.equal(a.push(ev("final", 900, { text: "30秒" })), undefined);
-	assert.equal(a.push(ev("final", 1000, { text: "戻して。" })), undefined);
-	assert.deepEqual(a.push(ev("finalized", 1100, { utterance: 1 })), { text: "30秒 戻して。", startedAt: 0, finalAt: 1100 });
-});
-
-test("a transcript arriving just after finalized still completes the utterance", () => {
-	const a = new UtteranceAssembler();
-	a.push(ev("speech_start", 0, { utterance: 1 }));
-	assert.equal(a.push(ev("finalized", 900, { utterance: 1 })), undefined);
-	assert.equal(a.waiting, true);
-	assert.equal(a.push(ev("final", 901, { text: "どういうこと？" }))?.text, "どういうこと？");
-	assert.equal(a.waiting, false);
-});
-
-test("transcripts heard without speech (a muted mic) are dropped", () => {
-	const a = new UtteranceAssembler();
-	assert.equal(a.push(ev("final", 500, { text: "あ" })), undefined);
-	a.push(ev("speech_start", 600, { utterance: 1 }));
-	assert.equal(a.push(ev("finalized", 900, { utterance: 1 })), undefined);
-});
-
-test("a stale finalized does not end a newer utterance", () => {
-	const a = new UtteranceAssembler();
-	a.push(ev("speech_start", 0, { utterance: 1 }));
-	a.push(ev("speech_start", 400, { utterance: 2 }));
-	a.push(ev("final", 500, { text: "止めて" }));
-	assert.equal(a.push(ev("finalized", 600, { utterance: 1 })), undefined);
-	assert.equal(a.push(ev("finalized", 700, { utterance: 2 }))?.text, "止めて");
+test("cloud transcripts of silence are not speech", () => {
+	assert.equal(isSpeech("ご視聴ありがとうございました。"), false);
+	assert.equal(isSpeech(" "), false);
+	assert.equal(isSpeech("止めて"), true);
 });
 
 test("condense summarizes tvctl status", () => {

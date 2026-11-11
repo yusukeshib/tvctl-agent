@@ -44,9 +44,8 @@ try {
 
 const spokenAnswers = new Set<string>();
 const voice: Voice = new Voice(config, (utterance) => {
-	log("heard", utterance.alternative ? `${utterance.text} | apple: ${utterance.alternative}` : utterance.text);
-	const message = utterance.alternative ? `${utterance.text}\n(別の認識結果: ${utterance.alternative})` : utterance.text;
-	void agent.say(message).then(async (answer) => {
+	log("heard", utterance.text);
+	void agent.say(utterance.text).then(async (answer) => {
 		if (answer === undefined) return;
 		log("answer", `${answer.ms.toFixed(0)} ms: ${answer.text}`);
 		// A steered utterance settles with the same answer as the run it joined: speak it once.

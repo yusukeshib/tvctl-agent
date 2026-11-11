@@ -10,31 +10,26 @@ export type Config = {
 		device?: string;
 		/** Test only: read this audio file in real time instead of a device. */
 		file?: string;
-		locale: string;
+		/** Spoken language (ISO 639-1) for the transcriber. */
+		language: string;
 		/** Silence after speech that ends an utterance. */
 		endSilenceMs: number;
 		/** Fixed speech threshold (dBFS); absent: adaptive, `marginDb` above the noise floor. */
 		thresholdDb?: number;
 		marginDb: number;
-		/** Recognizer: openai (Apple's transcript as a second opinion), or apple only. */
-		engine: "openai" | "apple";
-		openaiModel: string;
+		/** OpenAI realtime transcription model. */
+		model: string;
 		/** gpt-live-transcribe delay: minimal, low, medium, high, xhigh (more delay, more accuracy). */
-		openaiDelay: string;
+		delay: string;
 	};
 	speech: {
 		/** Speak the agent's answers. */
 		enabled: boolean;
-		/** AVSpeechSynthesisVoice identifier (`tvctl-voice voices`); absent: the locale's default voice. */
-		voice?: string;
-		/** 0.0-1.0; absent: the system default. */
-		rate?: number;
 		/** `tvctl duck` level (percent) for the player while the agent speaks; absent: leave duck alone. */
 		duckLevel?: number;
-		/** openai: a realtime voice model reads the answer; system: macOS speech synthesis. */
-		engine: "openai" | "system";
-		openaiModel: string;
-		openaiVoice: string;
+		/** OpenAI realtime model that reads the answers. */
+		model: string;
+		voice: string;
 	};
 	model: {
 		/** provider/modelId */
@@ -101,32 +96,24 @@ export function parseConfig(text: string): Config {
 	if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(compactorThinking)) {
 		throw new Error(`config: unknown thinking level ${compactorThinking}`);
 	}
-	const audioEngine = get(audio, "engine", "string", "openai");
-	if (!["openai", "apple"].includes(audioEngine)) throw new Error(`config: audio.engine must be openai or apple`);
-	const speechEngine = get(speech, "engine", "string", "openai");
-	if (!["openai", "system"].includes(speechEngine)) throw new Error(`config: speech.engine must be openai or system`);
 	const thinking = get(model, "thinking", "string", "off");
 	if (!["off", "minimal", "low", "medium", "high"].includes(thinking)) throw new Error(`config: unknown thinking level ${thinking}`);
 	return {
 		audio: {
 			device: get<string | undefined>(audio, "device", "string", undefined),
 			file: get<string | undefined>(audio, "file", "string", undefined),
-			locale: get(audio, "locale", "string", "ja-JP"),
+			language: get(audio, "language", "string", "ja"),
 			endSilenceMs: get(audio, "end_silence_ms", "number", 350),
 			thresholdDb: get<number | undefined>(audio, "threshold_db", "number", undefined),
 			marginDb: get(audio, "margin_db", "number", 15),
-			engine: audioEngine as Config["audio"]["engine"],
-			openaiModel: get(audio, "openai_model", "string", "gpt-live-transcribe"),
-			openaiDelay: get(audio, "openai_delay", "string", "medium"),
+			model: get(audio, "model", "string", "gpt-live-transcribe"),
+			delay: get(audio, "delay", "string", "medium"),
 		},
 		speech: {
 			enabled: get(speech, "enabled", "boolean", true),
-			voice: get<string | undefined>(speech, "voice", "string", undefined),
-			rate: get<number | undefined>(speech, "rate", "number", undefined),
 			duckLevel: get<number | undefined>(speech, "duck_level", "number", 20),
-			engine: speechEngine as Config["speech"]["engine"],
-			openaiModel: get(speech, "openai_model", "string", "gpt-realtime-2.1-mini"),
-			openaiVoice: get(speech, "openai_voice", "string", "marin"),
+			model: get(speech, "model", "string", "gpt-realtime-2.1-mini"),
+			voice: get(speech, "voice", "string", "marin"),
 		},
 		model: {
 			main: get(model, "main", "string", "anthropic/claude-haiku-5-5"),
