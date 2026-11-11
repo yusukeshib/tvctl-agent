@@ -16,7 +16,14 @@ struct ListenOptions {
     var endSilenceMs: Double = 500
     /// Emit the peak level every 500 ms (for choosing the threshold).
     var levels = false
+    /// Also emit each utterance's audio (`audio` events: base64 PCM16, 24 kHz mono), from `prerollMs`
+    /// before speech_start until speech_end, for a cloud transcriber.
+    var streamAudio = false
+    var prerollMs: Double = 400
 }
+
+/// The audio format of `audio` events.
+let streamFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: true)!
 
 /// Captures one input device and streams transcripts.
 final class Listener: @unchecked Sendable {
@@ -38,6 +45,10 @@ final class Listener: @unchecked Sendable {
     private var noiseFloorDb: Float = -60
     private var inputFormat: AVAudioFormat?
     private var observer: NSObjectProtocol?
+    private var streamConverter: AVAudioConverter?
+    /// Recent audio before speech starts, oldest first (tap thread only).
+    private var preroll: [Data] = []
+    private var prerollBytes = 0
 
     init(options: ListenOptions) {
         self.options = options
@@ -82,6 +93,7 @@ final class Listener: @unchecked Sendable {
         try await analyzer.start(inputSequence: stream)
         if let file {
             converter = AVAudioConverter(from: file.processingFormat, to: format)
+            streamConverter = AVAudioConverter(from: file.processingFormat, to: streamFormat)
             Thread.detachNewThread { [weak self] in self?.play(file) }
         } else {
             try startDevice()
@@ -106,6 +118,7 @@ final class Listener: @unchecked Sendable {
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { throw Failure("input device has no audio format") }
         self.inputFormat = inputFormat
         converter = AVAudioConverter(from: inputFormat, to: format)
+        streamConverter = AVAudioConverter(from: inputFormat, to: streamFormat)
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.handle(buffer)
         }
@@ -212,6 +225,40 @@ final class Listener: @unchecked Sendable {
         }
         continuation.yield(AnalyzerInput(buffer: out, bufferStartTime: start))
         detectSpeech(buffer, end: CMTime(value: samples, timescale: CMTimeScale(format.sampleRate)))
+        if options.streamAudio, let pcm = streamChunk(buffer) {
+            if speaking {
+                Out.emit("audio", ["utterance": utterance, "pcm": pcm.base64EncodedString()])
+            } else {
+                preroll.append(pcm)
+                prerollBytes += pcm.count
+                let max = Int(options.prerollMs / 1000 * 24000 * 2)
+                while prerollBytes > max, let first = preroll.first {
+                    prerollBytes -= first.count
+                    preroll.removeFirst()
+                }
+            }
+        }
+    }
+
+    /// The buffer as 24 kHz mono PCM16 bytes.
+    private func streamChunk(_ buffer: AVAudioPCMBuffer) -> Data? {
+        guard let streamConverter else { return nil }
+        let ratio = streamFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16
+        guard let out = AVAudioPCMBuffer(pcmFormat: streamFormat, frameCapacity: capacity) else { return nil }
+        var consumed = false
+        var error: NSError?
+        streamConverter.convert(to: out, error: &error) { _, status in
+            if consumed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard error == nil, out.frameLength > 0, let data = out.int16ChannelData else { return nil }
+        return Data(bytes: data[0], count: Int(out.frameLength) * 2)
     }
 
     /// Energy gate: marks speech start and, after enough silence, finalizes the transcript.
@@ -237,6 +284,13 @@ final class Listener: @unchecked Sendable {
                 speaking = true
                 utterance += 1
                 Out.emit("speech_start", ["utterance": utterance, "db": Double(db)])
+                if options.streamAudio {
+                    for pcm in preroll {
+                        Out.emit("audio", ["utterance": utterance, "pcm": pcm.base64EncodedString()])
+                    }
+                    preroll.removeAll()
+                    prerollBytes = 0
+                }
             }
         } else if speaking && now - lastSpeechMs >= options.endSilenceMs {
             speaking = false

@@ -7,7 +7,11 @@ import { promisify } from "node:util";
 import { Agent } from "./agent.ts";
 import { defaultConfigPath, loadConfig } from "./config.ts";
 import { log } from "./log.ts";
+import { openaiKey } from "./openai-voice.ts";
 import { Voice } from "./voice.ts";
+
+// launchd starts without the shell's environment: web search and the OpenAI voice need the key.
+if (openaiKey() === undefined) log("main", "OPENAI_API_KEY not found: web search and the OpenAI voice will fail");
 
 const run = promisify(execFile);
 
@@ -40,8 +44,9 @@ try {
 
 const spokenAnswers = new Set<string>();
 const voice: Voice = new Voice(config, (utterance) => {
-	log("heard", utterance.text);
-	void agent.say(utterance.text).then(async (answer) => {
+	log("heard", utterance.alternative ? `${utterance.text} | apple: ${utterance.alternative}` : utterance.text);
+	const message = utterance.alternative ? `${utterance.text}\n(別の認識結果: ${utterance.alternative})` : utterance.text;
+	void agent.say(message).then(async (answer) => {
 		if (answer === undefined) return;
 		log("answer", `${answer.ms.toFixed(0)} ms: ${answer.text}`);
 		// A steered utterance settles with the same answer as the run it joined: speak it once.

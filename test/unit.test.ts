@@ -2,7 +2,31 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseConfig } from "../src/config.ts";
 import { condense, condenseSearch } from "../src/tvctl.ts";
-import { UtteranceAssembler, type VoiceEvent } from "../src/voice.ts";
+import { SegmentJoiner, type Utterance, UtteranceAssembler, type VoiceEvent } from "../src/voice.ts";
+
+test("joiner: cloud transcript first, Apple's as the alternative; silence hallucinations dropped", async () => {
+	const out: Utterance[] = [];
+	const j = new SegmentJoiner(0, (u) => out.push(u));
+	j.start(1, 0);
+	j.apple("宇多田ヒカルを Spotifyで再生して。");
+	j.cloud(1, Promise.resolve("歌田光をSpotifyで再生して。"));
+	j.finalized(1, 900);
+	j.start(2, 1000);
+	j.cloud(2, Promise.resolve("ご視聴ありがとうございました。"));
+	j.finalized(2, 1500);
+	j.start(3, 2000);
+	j.apple("止めて");
+	j.cloud(3, Promise.resolve(undefined));
+	j.finalized(3, 2500);
+	await new Promise((r) => setTimeout(r, 20));
+	assert.deepEqual(
+		out.map((u) => [u.text, u.alternative]),
+		[
+			["歌田光をSpotifyで再生して。", "宇多田ヒカルを Spotifyで再生して。"],
+			["止めて", undefined],
+		],
+	);
+});
 
 const ev = (type: string, t: number, fields: Record<string, unknown> = {}): VoiceEvent => ({ type, t, ...fields });
 

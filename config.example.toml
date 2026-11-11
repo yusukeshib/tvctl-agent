@@ -10,11 +10,23 @@ end_silence_ms = 350
 # Speech detection is adaptive: margin_db above the measured noise floor. Set threshold_db (dBFS) to fix it.
 margin_db = 15
 # threshold_db = -45
+# Recognizer: "openai" (OpenAI realtime transcription; Apple's on-device transcript goes along as a
+# second opinion) or "apple" (on device only). openai uses OPENAI_API_KEY (from the environment or
+# your login shell).
+engine = "openai"
+openai_model = "gpt-live-transcribe"
+# minimal, low, medium, high, xhigh: more delay, more accuracy.
+openai_delay = "medium"
 
 [speech]
 # Speak the agent's answers.
 enabled = true
-# Voice identifier from `tvctl-voice voices`; default: the locale's default voice.
+# "openai": a realtime voice model reads the answer (falls back to the system voice); "system": macOS.
+engine = "openai"
+openai_model = "gpt-realtime-2.1-mini"
+# alloy, ash, ballad, coral, echo, sage, shimmer, verse, marin, cedar
+openai_voice = "marin"
+# System voice identifier from `tvctl-voice voices`; default: the best installed voice.
 # voice = "com.apple.voice.premium.ja-JP.Kyoko"
 # rate = 0.5
 # Lower the player to this volume (percent) while the agent speaks, with `tvctl duck`. Remove to leave duck alone.

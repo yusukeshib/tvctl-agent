@@ -4,12 +4,14 @@ import Foundation
 let usage = """
 usage: tvctl-voice devices
        tvctl-voice listen [--device NAME|UID | --file AUDIO] [--locale ja-JP] [--threshold-db DB | --margin-db 15] [--end-silence-ms 500]
-                          [--voice IDENTIFIER] [--rate 0.5]
+                          [--voice IDENTIFIER] [--rate 0.5] [--stream-audio]
        tvctl-voice voices [--locale ja-JP]
 
 listen streams JSON lines on stdout (ready, speech_start, partial, final, speech_end,
 finalized, speaking, spoken, status, error) and reads JSON lines on stdin:
   {"type":"speak","id":"1","text":"..."}   {"type":"stop_speaking"}
+  {"type":"pcm","id":"1","data":"<base64 PCM16 24 kHz mono>"}   {"type":"pcm_end","id":"1"}
+--stream-audio also emits each utterance's audio: {"type":"audio","utterance":1,"pcm":"<base64 PCM16 24 kHz mono>"}
 """
 
 func value(_ args: [String], _ name: String) -> String? {
@@ -17,7 +19,7 @@ func value(_ args: [String], _ name: String) -> String? {
     return args[i + 1]
 }
 
-func readCommands(_ speaker: Speaker) {
+func readCommands(_ speaker: Speaker, _ player: Player) {
     Thread.detachNewThread {
         while let line = readLine() {
             if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
@@ -31,8 +33,15 @@ func readCommands(_ speaker: Speaker) {
                 switch type {
                 case "speak":
                     speaker.speak(id: object["id"] as? String ?? "", text: object["text"] as? String ?? "")
+                case "pcm":
+                    if let data = Data(base64Encoded: object["data"] as? String ?? "") {
+                        player.chunk(id: object["id"] as? String ?? "", pcm: data)
+                    }
+                case "pcm_end":
+                    player.end(id: object["id"] as? String ?? "")
                 case "stop_speaking":
                     speaker.stop()
+                    player.stop()
                 default:
                     Out.error("unknown command: \(type)")
                 }
@@ -61,6 +70,7 @@ case "listen":
     options.device = value(args, "--device")
     options.file = value(args, "--file")
     options.levels = args.contains("--levels")
+    options.streamAudio = args.contains("--stream-audio")
     if let locale = value(args, "--locale") { options.locale = locale }
     if let db = value(args, "--threshold-db").flatMap(Float.init) { options.speechThresholdDb = db }
     if let db = value(args, "--margin-db").flatMap(Float.init) { options.adaptiveMarginDb = db }
@@ -68,7 +78,8 @@ case "listen":
     let speaker = Speaker(language: options.locale,
                           voiceIdentifier: value(args, "--voice"),
                           rate: value(args, "--rate").flatMap(Float.init))
-    readCommands(speaker)
+    let player = Player()
+    readCommands(speaker, player)
     let listener = Listener(options: options)
     Task {
         do {
