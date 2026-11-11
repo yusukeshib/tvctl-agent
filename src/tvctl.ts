@@ -122,7 +122,7 @@ export function createTvctlExtension(run: TvctlRun) {
 				jp_store: opt(oneOf([true, false])),
 			}),
 			execute: async (args) => {
-				const argv = ["search", args.service, args.query, "--limit", "6"];
+				const argv = ["search", args.service, args.query, "--limit", "5"];
 				if (args.kind && args.service === "spotify") argv.push("--kind", args.kind);
 				if (args.jp_store === true && args.service === "primevideo") argv.push("--site", "jp");
 				return text(await call(run, argv, condenseSearch));

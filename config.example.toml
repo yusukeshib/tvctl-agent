@@ -24,8 +24,22 @@ duck_level = 20
 # provider/modelId. anthropic and openai-codex use pi's logins (~/.pi/agent/auth.json); openai uses OPENAI_API_KEY.
 main = "anthropic/claude-haiku-5-5"
 thinking = "off"
+# Model and thinking level for memory compactions (OptChat). The spec uses xhigh; low keeps the wait
+# before a turn short (a turn waits for the last messages' summaries, see [memory] wait_ms).
+compactor = "anthropic/claude-haiku-5-5"
+compactor_thinking = "low"
 # OpenAI model for the web_search tool (uses OPENAI_API_KEY).
 web_search = "gpt-5.4-mini"
+
+[memory]
+# One chat that never ends (docs/optchat-spec.md). Sizes in bytes; the spec's values.
+enabled = true
+view_max = 128000
+view_min = 64000
+compaction_view_max = 32000
+compaction_view_min = 16000
+# Longest wait for earlier messages' summaries before a turn; past it, they show as not summarized yet.
+wait_ms = 10000
 
 [paths]
 # storage = "~/Library/Application Support/tvctl-agent/agent.sqlite"

@@ -40,6 +40,22 @@ conflict). `openai/...` models use `OPENAI_API_KEY`.
 
 While the agent speaks, `tvctl duck` lowers the player (`speech.duck_level`).
 
+## Memory
+
+One chat that never ends, as in the OptChat design
+([docs/optchat-spec.md](docs/optchat-spec.md), from
+[Taelin's gist](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)).
+Every message (your words, replies, tool calls and results) is logged in
+`optchat.sqlite` next to the pi-durable store and compressed in the background
+into a binary tree of one-line summaries. Each command is a fresh model call
+that sees the view (64-128 KB of summary lines, recent ones fine and old ones
+coarse) and can `zoom` into any line. pi-durable runs the calls; its own
+compaction is not used. Code: `src/optchat/`.
+
+Differences from the spec: compactions use `low` thinking by default (the spec
+uses `xhigh`; set `model.compactor_thinking`), and a turn waits at most
+`memory.wait_ms` for earlier summaries.
+
 ## voice helper
 
 ```sh

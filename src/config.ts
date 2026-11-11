@@ -29,8 +29,9 @@ export type Config = {
 		/** provider/modelId */
 		main: string;
 		thinking: "off" | "minimal" | "low" | "medium" | "high";
-		/** Model for OptChat compactions; absent: the main model. */
-		compactor?: string;
+		/** Model for OptChat compactions. */
+		compactor: string;
+		compactorThinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 		/** OpenAI model for web_search (Responses API web search). */
 		webSearch: string;
 	};
@@ -40,6 +41,16 @@ export type Config = {
 		voice: string;
 		/** pi's credential file, shared with its file lock (OAuth tokens are refreshed in place). */
 		piAuth: string;
+	};
+	/** OptChat memory (docs/optchat-spec.md); sizes in bytes. */
+	memory: {
+		enabled: boolean;
+		viewMax: number;
+		viewMin: number;
+		cviewMax: number;
+		cviewMin: number;
+		/** Longest wait for the last messages' summaries before a turn. */
+		waitMs: number;
 	};
 	/** Your own instructions, appended to the system prompt. */
 	instructions?: string;
@@ -74,6 +85,11 @@ export function parseConfig(text: string): Config {
 	const speech = table(root.speech, "speech");
 	const model = table(root.model, "model");
 	const paths = table(root.paths, "paths");
+	const memory = table(root.memory, "memory");
+	const compactorThinking = get(model, "compactor_thinking", "string", "low");
+	if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(compactorThinking)) {
+		throw new Error(`config: unknown thinking level ${compactorThinking}`);
+	}
 	const thinking = get(model, "thinking", "string", "off");
 	if (!["off", "minimal", "low", "medium", "high"].includes(thinking)) throw new Error(`config: unknown thinking level ${thinking}`);
 	return {
@@ -93,7 +109,8 @@ export function parseConfig(text: string): Config {
 		model: {
 			main: get(model, "main", "string", "anthropic/claude-haiku-5-5"),
 			thinking: thinking as Config["model"]["thinking"],
-			compactor: get<string | undefined>(model, "compactor", "string", undefined),
+			compactor: get(model, "compactor", "string", "anthropic/claude-haiku-5-5"),
+			compactorThinking: compactorThinking as Config["model"]["compactorThinking"],
 			webSearch: get(model, "web_search", "string", "gpt-5.4-mini"),
 		},
 		paths: {
@@ -101,6 +118,14 @@ export function parseConfig(text: string): Config {
 			tvctl: expand(get(paths, "tvctl", "string", "tvctl")),
 			voice: expand(get(paths, "voice", "string", join(repoRoot, "voice/.build/release/tvctl-voice"))),
 			piAuth: expand(get(paths, "pi_auth", "string", "~/.pi/agent/auth.json")),
+		},
+		memory: {
+			enabled: get(memory, "enabled", "boolean", true),
+			viewMax: get(memory, "view_max", "number", 128_000),
+			viewMin: get(memory, "view_min", "number", 64_000),
+			cviewMax: get(memory, "compaction_view_max", "number", 32_000),
+			cviewMin: get(memory, "compaction_view_min", "number", 16_000),
+			waitMs: get(memory, "wait_ms", "number", 10_000),
 		},
 		instructions: get<string | undefined>(root, "instructions", "string", undefined),
 	};
