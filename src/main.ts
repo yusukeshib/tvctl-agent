@@ -48,7 +48,7 @@ const voice: Voice = new Voice(config, (utterance) => {
 		if (spokenAnswers.has(answer.text + answer.ms.toFixed(0))) return;
 		spokenAnswers.add(answer.text + answer.ms.toFixed(0));
 		await voice.speak(answer.text);
-	});
+	}).catch((error: unknown) => log("agent", `failed: ${(error as Error).message}`));
 });
 voice.start();
 
