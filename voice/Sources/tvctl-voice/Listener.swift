@@ -9,10 +9,13 @@ struct ListenOptions {
     /// Feed this audio file in real time instead of a device (for tests).
     var file: String?
     var locale: String = "ja-JP"
-    /// Level above which a buffer counts as speech (dBFS).
-    var speechThresholdDb: Float = -45
+    /// Level above which a buffer counts as speech (dBFS). nil: adaptive, `adaptiveMarginDb` above the noise floor.
+    var speechThresholdDb: Float?
+    var adaptiveMarginDb: Float = 15
     /// Silence after speech that ends an utterance (ms).
     var endSilenceMs: Double = 500
+    /// Emit the peak level every 500 ms (for choosing the threshold).
+    var levels = false
 }
 
 /// Captures one input device and streams transcripts.
@@ -30,6 +33,11 @@ final class Listener: @unchecked Sendable {
     private var speaking = false
     private var lastSpeechMs: Double = 0
     private var utterance = 0
+    private var peakDb: Float = -160
+    private var lastLevelMs: Double = 0
+    private var noiseFloorDb: Float = -60
+    private var inputFormat: AVAudioFormat?
+    private var observer: NSObjectProtocol?
 
     init(options: ListenOptions) {
         self.options = options
@@ -52,14 +60,10 @@ final class Listener: @unchecked Sendable {
         self.analyzer = analyzer
 
         let file = try options.file.map { try AVAudioFile(forReading: URL(fileURLWithPath: $0)) }
-        if file == nil { try selectDevice() }
-        let input = engine.inputNode
-        let inputFormat = file?.processingFormat ?? input.outputFormat(forBus: 0)
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: inputFormat) else {
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: file?.processingFormat) else {
             throw Failure("no audio format compatible with the transcriber")
         }
         analyzerFormat = format
-        converter = AVAudioConverter(from: inputFormat, to: format)
         try await analyzer.prepareToAnalyze(in: format)
 
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
@@ -77,21 +81,49 @@ final class Listener: @unchecked Sendable {
 
         try await analyzer.start(inputSequence: stream)
         if let file {
+            converter = AVAudioConverter(from: file.processingFormat, to: format)
             Thread.detachNewThread { [weak self] in self?.play(file) }
         } else {
-            input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                self?.handle(buffer)
+            try startDevice()
+            observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                self?.restartDevice()
             }
-            engine.prepare()
-            try engine.start()
         }
         Out.emit("ready", [
             "locale": locale.identifier,
             "device": file == nil ? currentDeviceName() : options.file!,
-            "input_rate": inputFormat.sampleRate,
+            "input_rate": inputFormat?.sampleRate ?? file?.processingFormat.sampleRate ?? 0,
             "analyzer_rate": format.sampleRate,
         ])
         _ = await results.result
+    }
+
+    private func startDevice() throws {
+        guard let format = analyzerFormat else { return }
+        try selectDevice()
+        let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { throw Failure("input device has no audio format") }
+        self.inputFormat = inputFormat
+        converter = AVAudioConverter(from: inputFormat, to: format)
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            self?.handle(buffer)
+        }
+        engine.prepare()
+        try engine.start()
+    }
+
+    /// The device changed or went away: start again, retrying until it is back.
+    private func restartDevice() {
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        do {
+            try startDevice()
+            Out.emit("device", ["device": currentDeviceName(), "input_rate": inputFormat?.sampleRate ?? 0])
+        } catch {
+            Out.emit("device_lost", ["message": "\(error)"])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.restartDevice() }
+        }
     }
 
     /// Feeds a file at real-time pace, then 3 s of silence, like a device would.
@@ -178,7 +210,20 @@ final class Listener: @unchecked Sendable {
     private func detectSpeech(_ buffer: AVAudioPCMBuffer, end: CMTime) {
         let db = level(buffer)
         let now = Out.ms()
-        if db > options.speechThresholdDb {
+        if options.levels {
+            peakDb = max(peakDb, db)
+            if now - lastLevelMs >= 500 {
+                Out.emit("level", ["db": Double(peakDb.rounded())])
+                peakDb = -160
+                lastLevelMs = now
+            }
+        }
+        // Exact digital silence (a muted mic) never counts toward the noise floor.
+        if !speaking && db > -150 {
+            noiseFloorDb = noiseFloorDb * 0.98 + db * 0.02
+        }
+        let threshold = options.speechThresholdDb ?? max(noiseFloorDb + options.adaptiveMarginDb, -65)
+        if db > threshold {
             lastSpeechMs = now
             if !speaking {
                 speaking = true

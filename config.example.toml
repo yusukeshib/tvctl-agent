@@ -1,0 +1,37 @@
+# tvctl-agent configuration: ~/.config/tvctl-agent/config.toml
+# Every key is optional; the values below are the defaults unless noted.
+
+[audio]
+# Input device name or UID (`voice/.build/release/tvctl-voice devices`). Default: the system default input.
+# device = "MacBook Pro Microphone"
+locale = "ja-JP"
+# Silence after speech that ends an utterance. Lower answers sooner; too low cuts pauses mid-sentence.
+end_silence_ms = 350
+# Speech detection is adaptive: margin_db above the measured noise floor. Set threshold_db (dBFS) to fix it.
+margin_db = 15
+# threshold_db = -45
+
+[speech]
+# Speak the agent's answers.
+enabled = true
+# Voice identifier from `tvctl-voice voices`; default: the locale's default voice.
+# voice = "com.apple.voice.premium.ja-JP.Kyoko"
+# rate = 0.5
+# Lower the player to this volume (percent) while the agent speaks, with `tvctl duck`. Remove to leave duck alone.
+duck_level = 20
+
+[model]
+# provider/modelId. anthropic and openai-codex use pi's logins (~/.pi/agent/auth.json); openai uses OPENAI_API_KEY.
+main = "anthropic/claude-haiku-5-5"
+thinking = "off"
+
+[paths]
+# storage = "~/Library/Application Support/tvctl-agent/agent.sqlite"
+# tvctl = "tvctl"
+# voice = "<repo>/voice/.build/release/tvctl-voice"
+# pi_auth = "~/.pi/agent/auth.json"
+
+# Your own instructions, added to the system prompt.
+# instructions = """
+# Prefer Japanese subtitles. Netflix and Prime Video use the Japanese site.
+# """

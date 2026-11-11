@@ -18,6 +18,28 @@ Work in progress. macOS 26 or later on Apple silicon.
 - `scripts/bench-models.ts`: measures how fast candidate models pick the right
   tool for typical commands.
 
+## Install
+
+```sh
+scripts/install-launchd.sh          # builds the helper, installs a launchd agent (starts at login)
+scripts/install-launchd.sh uninstall
+```
+
+Configuration: `~/.config/tvctl-agent/config.toml` (see `config.example.toml`;
+every key is optional). Log: `~/Library/Logs/tvctl-agent/agent.log`.
+
+Try one command without the microphone:
+
+```sh
+node src/main.ts --text "一時停止して"
+```
+
+The default model is `anthropic/claude-haiku-5-5` through pi's login
+(`~/.pi/agent/auth.json`, shared with pi's file lock, so token refreshes do not
+conflict). `openai/...` models use `OPENAI_API_KEY`.
+
+While the agent speaks, `tvctl duck` lowers the player (`speech.duck_level`).
+
 ## voice helper
 
 ```sh

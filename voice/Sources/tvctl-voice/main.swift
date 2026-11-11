@@ -3,7 +3,7 @@ import Foundation
 
 let usage = """
 usage: tvctl-voice devices
-       tvctl-voice listen [--device NAME|UID | --file AUDIO] [--locale ja-JP] [--threshold-db -45] [--end-silence-ms 500]
+       tvctl-voice listen [--device NAME|UID | --file AUDIO] [--locale ja-JP] [--threshold-db DB | --margin-db 15] [--end-silence-ms 500]
                           [--voice IDENTIFIER] [--rate 0.5]
        tvctl-voice voices [--locale ja-JP]
 
@@ -20,6 +20,7 @@ func value(_ args: [String], _ name: String) -> String? {
 func readCommands(_ speaker: Speaker) {
     Thread.detachNewThread {
         while let line = readLine() {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
             guard let data = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let type = object["type"] as? String else {
@@ -59,8 +60,10 @@ case "listen":
     var options = ListenOptions()
     options.device = value(args, "--device")
     options.file = value(args, "--file")
+    options.levels = args.contains("--levels")
     if let locale = value(args, "--locale") { options.locale = locale }
     if let db = value(args, "--threshold-db").flatMap(Float.init) { options.speechThresholdDb = db }
+    if let db = value(args, "--margin-db").flatMap(Float.init) { options.adaptiveMarginDb = db }
     if let ms = value(args, "--end-silence-ms").flatMap(Double.init) { options.endSilenceMs = ms }
     let speaker = Speaker(language: options.locale,
                           voiceIdentifier: value(args, "--voice"),
