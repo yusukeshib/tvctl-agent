@@ -76,8 +76,23 @@ export function condense(output: string): string {
 	return parts.join("; ").slice(0, 480);
 }
 
+/** Search results as one line each: kind, title, details, url. */
+export function condenseSearch(output: string): string {
+	const data = JSON.parse(output) as { results?: Record<string, Json>[] };
+	const results = data.results ?? [];
+	if (results.length === 0) return "no results";
+	return results
+		.map((r, i) => {
+			const details = [r.by, r.channel, r.duration, r.published, r.live === true ? "LIVE now" : undefined]
+				.filter((v) => typeof v === "string" && v !== "")
+				.join(", ");
+			return `${i + 1}. [${brief(r.kind)}] ${brief(r.title)}${details ? ` (${details})` : ""} ${brief(r.url)}`;
+		})
+		.join("\n");
+}
+
 /** Runs tvctl; starts the server and retries once when it is not running. */
-async function call(run: TvctlRun, args: string[]): Promise<string> {
+async function call(run: TvctlRun, args: string[], format: (stdout: string) => string = condense): Promise<string> {
 	const started = performance.now();
 	let result = await run(args);
 	if (!result.ok && /server is not running/.test(result.stderr)) {
@@ -86,7 +101,7 @@ async function call(run: TvctlRun, args: string[]): Promise<string> {
 	}
 	log("tvctl", `${args.join(" ")} -> ${result.ok ? "ok" : "error"} ${(performance.now() - started).toFixed(0)} ms`);
 	if (!result.ok) throw new Error(result.stderr.replace(/^error:\s*/, "").trim().slice(0, 400));
-	return condense(result.stdout);
+	return format(result.stdout);
 }
 
 function text(value: string) {
@@ -96,6 +111,21 @@ function text(value: string) {
 export function createTvctlExtension(run: TvctlRun) {
 	const tvctl = async (args: string[]) => text(await call(run, args));
 	const tools = [
+		defineTool({
+			name: "search_media",
+			description:
+				"Search YouTube or Spotify for something to play; returns titles with URLs for play. Spotify kind: track, album, artist, playlist, episode or show (omit for a mix; artist plays their top songs).",
+			parameters: obj({
+				service: oneOf(["youtube", "spotify"]),
+				query: str(),
+				kind: opt(oneOf(["track", "album", "artist", "playlist", "episode", "show"])),
+			}),
+			execute: async (args) => {
+				const argv = ["search", args.service, args.query, "--limit", "6"];
+				if (args.kind && args.service === "spotify") argv.push("--kind", args.kind);
+				return text(await call(run, argv, condenseSearch));
+			},
+		}),
 		defineTool({
 			name: "play",
 			description:

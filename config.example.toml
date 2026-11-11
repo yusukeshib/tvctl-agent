@@ -24,6 +24,8 @@ duck_level = 20
 # provider/modelId. anthropic and openai-codex use pi's logins (~/.pi/agent/auth.json); openai uses OPENAI_API_KEY.
 main = "anthropic/claude-haiku-5-5"
 thinking = "off"
+# OpenAI model for the web_search tool (uses OPENAI_API_KEY).
+web_search = "gpt-5.4-mini"
 
 [paths]
 # storage = "~/Library/Application Support/tvctl-agent/agent.sqlite"

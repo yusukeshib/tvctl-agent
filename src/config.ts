@@ -31,6 +31,8 @@ export type Config = {
 		thinking: "off" | "minimal" | "low" | "medium" | "high";
 		/** Model for OptChat compactions; absent: the main model. */
 		compactor?: string;
+		/** OpenAI model for web_search (Responses API web search). */
+		webSearch: string;
 	};
 	paths: {
 		storage: string;
@@ -92,6 +94,7 @@ export function parseConfig(text: string): Config {
 			main: get(model, "main", "string", "anthropic/claude-haiku-5-5"),
 			thinking: thinking as Config["model"]["thinking"],
 			compactor: get<string | undefined>(model, "compactor", "string", undefined),
+			webSearch: get(model, "web_search", "string", "gpt-5.4-mini"),
 		},
 		paths: {
 			storage: expand(get(paths, "storage", "string", "~/Library/Application Support/tvctl-agent/agent.sqlite")),

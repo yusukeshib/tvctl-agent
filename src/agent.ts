@@ -9,6 +9,7 @@ import { PiAuthStore } from "./credentials.ts";
 import { log } from "./log.ts";
 import { remoteInstructions } from "./prompt.ts";
 import { createTvctlExtension, execTvctl } from "./tvctl.ts";
+import { createWebExtension } from "./web.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -33,6 +34,7 @@ export class Agent {
 		});
 		registry.install(remote);
 		registry.install(createTvctlExtension(execTvctl(config.paths.tvctl)));
+		registry.install(createWebExtension(config.model.webSearch));
 		const storage = await openNodeSqliteStorage(config.paths.storage);
 		const harness = await Harness.open(
 			storage,
