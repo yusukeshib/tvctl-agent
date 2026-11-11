@@ -1,0 +1,4 @@
+node_modules/
+voice/.build/
+dist/
+.DS_Store
