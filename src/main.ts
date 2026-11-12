@@ -42,15 +42,15 @@ try {
 	log("main", `tvctl setup failed: ${(error as Error).message}`);
 }
 
-const spokenAnswers = new Set<string>();
+/** The last answer spoken: utterances steered into one run all settle with that run's answer. */
+let lastSpoken = -1;
 const voice: Voice = new Voice(config, (utterance) => {
 	log("heard", utterance.text);
 	void agent.say(utterance.text).then(async (answer) => {
 		if (answer === undefined) return;
+		if (answer.id <= lastSpoken) return;
+		lastSpoken = answer.id;
 		log("answer", `${answer.ms.toFixed(0)} ms: ${answer.text}`);
-		// A steered utterance settles with the same answer as the run it joined: speak it once.
-		if (spokenAnswers.has(answer.text + answer.ms.toFixed(0))) return;
-		spokenAnswers.add(answer.text + answer.ms.toFixed(0));
 		await voice.speak(answer.text);
 	}).catch((error: unknown) => log("agent", `failed: ${(error as Error).message}`));
 });

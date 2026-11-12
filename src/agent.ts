@@ -17,7 +17,8 @@ import { createWebExtension } from "./web.ts";
 
 const context = BACKGROUND_CONTEXT;
 
-export type Answer = { text: string; ms: number };
+/** `id`: the answer entry; utterances steered into one run settle with the same answer. */
+export type Answer = { id: number; text: string; ms: number };
 
 export class Agent {
 	private readonly harness: Harness;
@@ -134,13 +135,14 @@ export class Agent {
 		}
 		const page = await this.root.entries({ minEntryId: settled.answer, maxEntryId: settled.answer }, 1, undefined, context);
 		const message = page.items[0]?.model?.[0];
-		if (message === undefined || message.role !== "assistant") return { text: "", ms };
+		const id = Number(settled.answer);
+		if (message === undefined || message.role !== "assistant") return { id, text: "", ms };
 		const answer = message.content
 			.filter((block) => block.type === "text")
 			.map((block) => block.text)
 			.join("")
 			.trim();
-		return { text: answer, ms };
+		return { id, text: answer, ms };
 	}
 
 	async close(): Promise<void> {
