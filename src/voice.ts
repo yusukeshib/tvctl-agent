@@ -95,8 +95,7 @@ export class Voice {
 				return;
 			}
 			case "speech_start":
-				// The user talks over the agent: stop speaking.
-				if (this.spoken.size > 0) this.stopSpeaking();
+				// Not a reason to stop speaking: any noise starts an utterance (barge-in needs echo cancellation).
 				this.startedAt = event.t;
 				this.transcriber.begin();
 				break;
