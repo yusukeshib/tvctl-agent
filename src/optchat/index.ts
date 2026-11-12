@@ -233,7 +233,9 @@ export class OptChat {
 		}
 		const own = messages.filter((m) => m.role !== "system").slice(-run || messages.length);
 		const [first, ...rest] = own;
-		const state: Block = { type: "text", text: `Now: ${now.toString()}` };
+		// Per-turn state after the view (spec §6). It also says what this call is: without it, a short
+		// message after a long view was sometimes answered with a compaction line.
+		const state: Block = { type: "text", text: `Now: ${now.toString()}\nThis call is a turn: act on the user's new message below.` };
 		const head: Block[] = [...viewBlocks(this.viewLines()), state];
 		if (first === undefined || first.role !== "user") {
 			return [...system, { role: "user", content: head, timestamp: now.getTime() }, ...own];
