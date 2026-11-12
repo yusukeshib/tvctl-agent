@@ -12,6 +12,7 @@ final class Converse: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
+    private var monoFormat: AVAudioFormat?
     private let levels: Bool
     private var observer: NSObjectProtocol?
 
@@ -52,7 +53,11 @@ final class Converse: @unchecked Sendable {
         }
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw Failure("input device has no audio format") }
-        converter = AVAudioConverter(from: format, to: streamFormat)
+        // Voice processing reports several channels; the processed microphone is the first one. Converting
+        // all of them to mono gave silence, so convert only channel 0.
+        guard let mono = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 1) else { throw Failure("no mono format") }
+        monoFormat = mono
+        converter = AVAudioConverter(from: mono, to: streamFormat)
         input.installTap(onBus: 0, bufferSize: 2400, format: format) { [weak self] buffer, _ in
             self?.handle(buffer)
         }
@@ -145,8 +150,11 @@ final class Converse: @unchecked Sendable {
     // MARK: audio helpers (tap thread)
 
     /// The buffer as 24 kHz mono PCM16 bytes.
-    private func pcm16(_ buffer: AVAudioPCMBuffer) -> Data? {
-        guard let converter else { return nil }
+    private func pcm16(_ input: AVAudioPCMBuffer) -> Data? {
+        guard let converter, let monoFormat, let source = input.floatChannelData,
+              let buffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: input.frameLength) else { return nil }
+        buffer.frameLength = input.frameLength
+        buffer.floatChannelData![0].update(from: source[0], count: Int(input.frameLength))
         let ratio = streamFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16
         guard let out = AVAudioPCMBuffer(pcmFormat: streamFormat, frameCapacity: capacity) else { return nil }
