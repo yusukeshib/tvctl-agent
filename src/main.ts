@@ -50,6 +50,20 @@ try {
 	log("main", `tvctl setup failed: ${(error as Error).message}`);
 }
 
+// The microphone's peak level, logged once a minute (a silent microphone is the usual reason for no answers).
+let peak = 0;
+let chunks = 0;
+function meter(pcm: string): void {
+	const bytes = Buffer.from(pcm, "base64");
+	for (let i = 0; i + 1 < bytes.length; i += 2) peak = Math.max(peak, Math.abs(bytes.readInt16LE(i)));
+	chunks++;
+}
+setInterval(() => {
+	log("mic", `peak ${peak > 0 ? (20 * Math.log10(peak / 32768)).toFixed(0) : "-inf"} dBFS over ${chunks} chunks`);
+	peak = 0;
+	chunks = 0;
+}, 15_000).unref();
+
 // The helper: echo-cancelled microphone in, speech out.
 const helper = spawn(config.paths.voice, ["converse"], { stdio: ["pipe", "pipe", "inherit"] });
 const command = (event: Record<string, unknown>) => helper.stdin.write(`${JSON.stringify(event)}\n`);
@@ -67,6 +81,7 @@ createInterface({ input: helper.stdout }).on("line", (line) => {
 	}
 	switch (event.type) {
 		case "audio":
+			meter(String(event.pcm));
 			realtime.appendAudio(String(event.pcm));
 			break;
 		case "stopped":
