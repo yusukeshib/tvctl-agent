@@ -65,7 +65,10 @@ setInterval(() => {
 }, 15_000).unref();
 
 // The helper: echo-cancelled microphone in, speech out.
-const helper = spawn(config.paths.voice, ["converse"], { stdio: ["pipe", "pipe", "inherit"] });
+const helper = spawn(
+	config.paths.voice,
+	["converse", ...(config.audio.levels ? ["--levels"] : []), ...(config.audio.echoCancellation ? [] : ["--no-echo-cancellation"])],
+	 { stdio: ["pipe", "pipe", "inherit"] });
 const command = (event: Record<string, unknown>) => helper.stdin.write(`${JSON.stringify(event)}\n`);
 const realtime = new Realtime(options, {
 	audio: (id, data) => command({ type: "pcm", id, data }),

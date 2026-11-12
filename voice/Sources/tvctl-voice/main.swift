@@ -3,7 +3,7 @@ import Foundation
 
 let usage = """
 usage: tvctl-voice devices
-       tvctl-voice converse [--levels]
+       tvctl-voice converse [--levels] [--no-echo-cancellation]
 
 converse streams the default microphone (echo-cancelled) and plays speech, as JSON lines.
 stdout: ready, audio {"pcm":"<base64 PCM16 24 kHz mono>"}, speaking {"id"}, spoken {"id"},
@@ -47,7 +47,7 @@ case "devices":
     let data = try JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted, .sortedKeys])
     print(String(decoding: data, as: UTF8.self))
 case "converse":
-    let converse = Converse(levels: args.contains("--levels"))
+    let converse = Converse(levels: args.contains("--levels"), voiceProcessing: !args.contains("--no-echo-cancellation"))
     readCommands(converse)
     do {
         try converse.run()

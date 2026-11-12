@@ -14,6 +14,12 @@ noise_reduction = "near_field"
 transcribe_model = "gpt-4o-mini-transcribe"
 language = "ja"
 
+[audio]
+# Cancel the agent's own voice from the microphone, so you can talk over it.
+echo_cancellation = true
+# Log the microphone level every 500 ms (for checking the microphone).
+levels = false
+
 [speech]
 # Lower the player to this volume (percent) while the agent speaks, with `tvctl duck`. Remove to leave duck alone.
 duck_level = 10

@@ -18,6 +18,12 @@ export type Config = {
 		transcribeModel: string;
 		language: string;
 	};
+	audio: {
+		/** Cancel the agent's own voice from the microphone (lets you talk over it). */
+		echoCancellation: boolean;
+		/** Log the microphone level every 500 ms (per channel). */
+		levels: boolean;
+	};
 	speech: {
 		/** `tvctl duck` level (percent) for the player while the agent speaks; absent: leave duck alone. */
 		duckLevel?: number;
@@ -66,6 +72,7 @@ export function parseConfig(text: string): Config {
 	const root = parse(text) as Table;
 	const realtime = table(root.realtime, "realtime");
 	const speech = table(root.speech, "speech");
+	const audio = table(root.audio, "audio");
 	const memory = table(root.memory, "memory");
 	const paths = table(root.paths, "paths");
 	const eagerness = get(realtime, "eagerness", "string", "auto");
@@ -80,6 +87,10 @@ export function parseConfig(text: string): Config {
 			noiseReduction,
 			transcribeModel: get(realtime, "transcribe_model", "string", "gpt-4o-mini-transcribe"),
 			language: get(realtime, "language", "string", "ja"),
+		},
+		audio: {
+			echoCancellation: get(audio, "echo_cancellation", "boolean", true),
+			levels: get(audio, "levels", "boolean", false),
 		},
 		speech: {
 			duckLevel: get<number | undefined>(speech, "duck_level", "number", 10),

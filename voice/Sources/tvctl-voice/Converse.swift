@@ -25,8 +25,11 @@ final class Converse: @unchecked Sendable {
     private var channelDb: [Float] = []
     private var lastLevelMs: Double = 0
 
-    init(levels: Bool) {
+    private let voiceProcessing: Bool
+
+    init(levels: Bool, voiceProcessing: Bool) {
         self.levels = levels
+        self.voiceProcessing = voiceProcessing
     }
 
     func run() throws {
@@ -42,9 +45,9 @@ final class Converse: @unchecked Sendable {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: playFormat)
         _ = engine.outputNode
-        try input.setVoiceProcessingEnabled(true)
+        try input.setVoiceProcessingEnabled(voiceProcessing)
         // Voice processing ducks all other audio by default; tvctl ducks the player itself, only while we speak.
-        if #available(macOS 14.0, *) {
+        if voiceProcessing, #available(macOS 14.0, *) {
             input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
         }
         let format = input.outputFormat(forBus: 0)
@@ -55,7 +58,7 @@ final class Converse: @unchecked Sendable {
         }
         engine.prepare()
         try engine.start()
-        Out.emit("ready", ["input_rate": format.sampleRate, "channels": Int(format.channelCount)])
+        Out.emit("ready", ["input_rate": format.sampleRate, "channels": Int(format.channelCount), "voice_processing": voiceProcessing])
     }
 
     /// The device changed or went away: start again, retrying until it is back.
