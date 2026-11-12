@@ -5,60 +5,36 @@ import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
 
 export type Config = {
-	audio: {
-		/** Input device name or UID; absent: the system default input. */
-		device?: string;
-		/** Test only: read this audio file in real time instead of a device. */
-		file?: string;
-		/** Spoken language (ISO 639-1) for the transcriber. */
-		language: string;
-		/** Silence after speech that ends an utterance. */
-		endSilenceMs: number;
-		/** Fixed speech threshold (dBFS); absent: adaptive, `marginDb` above the noise floor. */
-		thresholdDb?: number;
-		marginDb: number;
-		/** OpenAI realtime transcription model. */
+	/** The OpenAI Realtime conversation (OPENAI_API_KEY). */
+	realtime: {
 		model: string;
-		/** gpt-live-transcribe delay: minimal, low, medium, high, xhigh (more delay, more accuracy). */
-		delay: string;
+		/** alloy, ash, ballad, coral, echo, sage, shimmer, verse, marin, cedar */
+		voice: string;
+		/** semantic_vad eagerness: low (lets you pause), medium, high, auto. */
+		eagerness: string;
+		/** near_field (headset, lavalier), far_field (laptop or room mic), or off. */
+		noiseReduction: string;
+		/** Transcribes what you say, for the log and memory. */
+		transcribeModel: string;
+		language: string;
 	};
 	speech: {
-		/** Speak the agent's answers. */
-		enabled: boolean;
 		/** `tvctl duck` level (percent) for the player while the agent speaks; absent: leave duck alone. */
 		duckLevel?: number;
-		/** OpenAI realtime model that reads the answers. */
-		model: string;
-		voice: string;
 	};
-	model: {
-		/** provider/modelId */
-		main: string;
-		thinking: "off" | "minimal" | "low" | "medium" | "high";
-		/** Model for OptChat compactions. */
-		compactor: string;
-		compactorThinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-		/** OpenAI model for web_search (Responses API web search). */
-		webSearch: string;
+	/** OpenAI model for the web_search tool (Responses API web search). */
+	webSearchModel: string;
+	memory: {
+		/** How much of the recent conversation (characters) each new session starts with. */
+		recentChars: number;
 	};
 	paths: {
-		storage: string;
+		/** The conversation log (JSON lines), the agent's memory across sessions. */
+		memory: string;
 		tvctl: string;
 		voice: string;
-		/** pi's credential file, shared with its file lock (OAuth tokens are refreshed in place). */
-		piAuth: string;
 	};
-	/** OptChat memory (the OptChat spec, https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449); sizes in bytes. */
-	memory: {
-		enabled: boolean;
-		viewMax: number;
-		viewMin: number;
-		cviewMax: number;
-		cviewMin: number;
-		/** Longest wait for the last messages' summaries before a turn. */
-		waitMs: number;
-	};
-	/** Your own instructions, appended to the system prompt. */
+	/** Your own instructions, added to the session instructions. */
 	instructions?: string;
 };
 
@@ -85,56 +61,37 @@ function get<T>(t: Table, key: string, type: "string" | "number" | "boolean", fa
 	return value as T;
 }
 
+/** Unknown keys (including those of older versions) are ignored. */
 export function parseConfig(text: string): Config {
 	const root = parse(text) as Table;
-	const audio = table(root.audio, "audio");
+	const realtime = table(root.realtime, "realtime");
 	const speech = table(root.speech, "speech");
-	const model = table(root.model, "model");
-	const paths = table(root.paths, "paths");
 	const memory = table(root.memory, "memory");
-	const compactorThinking = get(model, "compactor_thinking", "string", "low");
-	if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(compactorThinking)) {
-		throw new Error(`config: unknown thinking level ${compactorThinking}`);
-	}
-	const thinking = get(model, "thinking", "string", "off");
-	if (!["off", "minimal", "low", "medium", "high"].includes(thinking)) throw new Error(`config: unknown thinking level ${thinking}`);
+	const paths = table(root.paths, "paths");
+	const eagerness = get(realtime, "eagerness", "string", "auto");
+	if (!["low", "medium", "high", "auto"].includes(eagerness)) throw new Error(`config: unknown eagerness ${eagerness}`);
+	const noiseReduction = get(realtime, "noise_reduction", "string", "near_field");
+	if (!["near_field", "far_field", "off"].includes(noiseReduction)) throw new Error(`config: unknown noise_reduction ${noiseReduction}`);
 	return {
-		audio: {
-			device: get<string | undefined>(audio, "device", "string", undefined),
-			file: get<string | undefined>(audio, "file", "string", undefined),
-			language: get(audio, "language", "string", "ja"),
-			endSilenceMs: get(audio, "end_silence_ms", "number", 350),
-			thresholdDb: get<number | undefined>(audio, "threshold_db", "number", undefined),
-			marginDb: get(audio, "margin_db", "number", 15),
-			model: get(audio, "model", "string", "gpt-live-transcribe"),
-			delay: get(audio, "delay", "string", "medium"),
+		realtime: {
+			model: get(realtime, "model", "string", "gpt-realtime-2.1"),
+			voice: get(realtime, "voice", "string", "marin"),
+			eagerness,
+			noiseReduction,
+			transcribeModel: get(realtime, "transcribe_model", "string", "gpt-4o-mini-transcribe"),
+			language: get(realtime, "language", "string", "ja"),
 		},
 		speech: {
-			enabled: get(speech, "enabled", "boolean", true),
-			duckLevel: get<number | undefined>(speech, "duck_level", "number", 20),
-			model: get(speech, "model", "string", "gpt-realtime-2.1-mini"),
-			voice: get(speech, "voice", "string", "marin"),
+			duckLevel: get<number | undefined>(speech, "duck_level", "number", 10),
 		},
-		model: {
-			main: get(model, "main", "string", "anthropic/claude-haiku-5-5"),
-			thinking: thinking as Config["model"]["thinking"],
-			compactor: get(model, "compactor", "string", "anthropic/claude-haiku-5-5"),
-			compactorThinking: compactorThinking as Config["model"]["compactorThinking"],
-			webSearch: get(model, "web_search", "string", "gpt-5.4-mini"),
+		webSearchModel: get(table(root.model, "model"), "web_search", "string", "gpt-5.4-mini"),
+		memory: {
+			recentChars: get(memory, "recent_chars", "number", 6000),
 		},
 		paths: {
-			storage: expand(get(paths, "storage", "string", "~/Library/Application Support/tvctl-agent/agent.sqlite")),
+			memory: expand(get(paths, "memory", "string", "~/Library/Application Support/tvctl-agent/conversation.jsonl")),
 			tvctl: expand(get(paths, "tvctl", "string", "tvctl")),
 			voice: expand(get(paths, "voice", "string", join(repoRoot, "voice/.build/release/tvctl-voice"))),
-			piAuth: expand(get(paths, "pi_auth", "string", "~/.pi/agent/auth.json")),
-		},
-		memory: {
-			enabled: get(memory, "enabled", "boolean", true),
-			viewMax: get(memory, "view_max", "number", 128_000),
-			viewMin: get(memory, "view_min", "number", 64_000),
-			cviewMax: get(memory, "compaction_view_max", "number", 32_000),
-			cviewMin: get(memory, "compaction_view_min", "number", 16_000),
-			waitMs: get(memory, "wait_ms", "number", 10_000),
 		},
 		instructions: get<string | undefined>(root, "instructions", "string", undefined),
 	};
@@ -148,10 +105,4 @@ export async function loadConfig(path: string): Promise<Config> {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
 	return parseConfig(text);
-}
-
-export function splitModelRef(ref: string): { provider: string; modelId: string } {
-	const slash = ref.indexOf("/");
-	if (slash <= 0) throw new Error(`model must be provider/modelId: ${ref}`);
-	return { provider: ref.slice(0, slash), modelId: ref.slice(slash + 1) };
 }

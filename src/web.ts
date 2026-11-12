@@ -1,11 +1,12 @@
 // web_search: OpenAI's hosted web search (Responses API), answered in a few lines with source URLs.
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import { obj, str } from "@earendil-works/pi-schema";
 import { log } from "./log.ts";
+import { openaiKey } from "./openai.ts";
 
 type ResponsesOutput = { output?: { type: string; content?: { type: string; text?: string }[] }[]; error?: { message?: string } };
 
-export async function webSearch(query: string, model: string, apiKey: string): Promise<string> {
+export async function webSearch(query: string, model: string): Promise<string> {
+	const apiKey = openaiKey();
+	if (!apiKey) throw new Error("web search needs OPENAI_API_KEY");
 	const started = performance.now();
 	const response = await fetch("https://api.openai.com/v1/responses", {
 		method: "POST",
@@ -28,23 +29,4 @@ export async function webSearch(query: string, model: string, apiKey: string): P
 		.join("")
 		.trim();
 	return answer || "no results";
-}
-
-export function createWebExtension(model: string) {
-	return defineExtension({
-		name: "web",
-		tools: [
-			defineTool({
-				name: "web_search",
-				description:
-					"Search the web: facts, news, schedules, or which title/song/channel the user means before search_media. Not for finding playable URLs on YouTube/Spotify (use search_media).",
-				parameters: obj({ query: str() }),
-				execute: async (args) => {
-					const key = process.env.OPENAI_API_KEY;
-					if (!key) throw new Error("web search needs OPENAI_API_KEY");
-					return { output: [{ type: "text" as const, text: await webSearch(args.query, model, key) }] };
-				},
-			}),
-		],
-	});
 }

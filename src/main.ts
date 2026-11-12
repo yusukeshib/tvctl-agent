@@ -1,65 +1,95 @@
 #!/usr/bin/env node
-// tvctl-agent: listens to the configured microphone and drives tvctl.
+// tvctl-agent: a voice conversation with the TV over one OpenAI Realtime session.
 //   node src/main.ts [--config PATH] [--text "コマンド"]
-// --text runs one command without the microphone (for testing) and exits.
-import { execFile } from "node:child_process";
+// --text sends one typed message (text only, no microphone; for testing) and exits.
+import { execFile, spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { Agent } from "./agent.ts";
 import { defaultConfigPath, loadConfig } from "./config.ts";
+import { buildInstructions } from "./instructions.ts";
 import { log } from "./log.ts";
-import { openaiKey } from "./openai-voice.ts";
-import { Voice } from "./voice.ts";
-
-// launchd starts without the shell's environment: web search and the OpenAI voice need the key.
-if (openaiKey() === undefined) log("main", "OPENAI_API_KEY not found: web search and the OpenAI voice will fail");
-
-const run = promisify(execFile);
+import { Memory } from "./memory.ts";
+import { openaiKey } from "./openai.ts";
+import { Realtime } from "./realtime.ts";
+import { createTools, execTvctl } from "./tools.ts";
 
 function flag(name: string): string | undefined {
 	const i = process.argv.indexOf(name);
 	return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-const configPath = flag("--config") ?? defaultConfigPath;
-const config = await loadConfig(configPath);
-const agent = await Agent.open(config);
-log("main", `model ${config.model.main}, storage ${config.paths.storage}`);
+const config = await loadConfig(flag("--config") ?? defaultConfigPath);
+// launchd starts without the shell's environment: read the key from the login shell.
+if (openaiKey() === undefined) log("main", "OPENAI_API_KEY not found");
+
+const memory = new Memory(config.paths.memory);
+const tools = createTools(execTvctl(config.paths.tvctl), config.webSearchModel);
+const options = {
+	...config.realtime,
+	instructions: () => buildInstructions(memory.recent(config.memory.recentChars), config.instructions),
+	tools,
+	memory,
+};
 
 const once = flag("--text");
 if (once !== undefined) {
-	const answer = await agent.say(once);
-	log("main", `answer (${answer?.ms.toFixed(0) ?? "-"} ms): ${answer?.text ?? "(none)"}`);
-	await agent.close();
+	const realtime = new Realtime({ ...options, text: true });
+	await realtime.connect();
+	await realtime.say(once);
+	realtime.close();
 	process.exit(0);
 }
 
+const run = promisify(execFile);
 try {
 	await run(config.paths.tvctl, ["server", "up"]);
-	if (config.speech.enabled && config.speech.duckLevel !== undefined) {
+	if (config.speech.duckLevel !== undefined) {
 		await run(config.paths.tvctl, ["duck", "on", "--apps", "tvctl-voice", "--level", String(config.speech.duckLevel)]);
 	}
 } catch (error) {
 	log("main", `tvctl setup failed: ${(error as Error).message}`);
 }
 
-/** The last answer spoken: utterances steered into one run all settle with that run's answer. */
-let lastSpoken = -1;
-const voice: Voice = new Voice(config, (utterance) => {
-	log("heard", utterance.text);
-	void agent.say(utterance.text).then(async (answer) => {
-		if (answer === undefined) return;
-		if (answer.id <= lastSpoken) return;
-		lastSpoken = answer.id;
-		log("answer", `${answer.ms.toFixed(0)} ms: ${answer.text}`);
-		await voice.speak(answer.text);
-	}).catch((error: unknown) => log("agent", `failed: ${(error as Error).message}`));
+// The helper: echo-cancelled microphone in, speech out.
+const helper = spawn(config.paths.voice, ["converse"], { stdio: ["pipe", "pipe", "inherit"] });
+const command = (event: Record<string, unknown>) => helper.stdin.write(`${JSON.stringify(event)}\n`);
+const realtime = new Realtime(options, {
+	audio: (id, data) => command({ type: "pcm", id, data }),
+	end: (id) => command({ type: "pcm_end", id }),
+	stop: () => command({ type: "stop" }),
 });
-voice.start();
+createInterface({ input: helper.stdout }).on("line", (line) => {
+	let event: { type: string; [key: string]: unknown };
+	try {
+		event = JSON.parse(line) as typeof event;
+	} catch {
+		return;
+	}
+	switch (event.type) {
+		case "audio":
+			realtime.appendAudio(String(event.pcm));
+			break;
+		case "stopped":
+			realtime.stopped(String(event.id), Number(event.played_ms));
+			break;
+		case "spoken":
+			realtime.spoken(String(event.id));
+			break;
+		default:
+			log("voice", line);
+	}
+});
+helper.on("exit", (code) => {
+	log("main", `voice helper exited (${code})`);
+	process.exit(1);
+});
 
-const shutdown = async () => {
-	voice.stop();
-	await agent.close();
+await realtime.connect();
+
+const shutdown = () => {
+	realtime.close();
+	helper.kill();
 	process.exit(0);
 };
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

@@ -1,7 +1,7 @@
 {
   "name": "tvctl-agent",
   "version": "0.1.0",
-  "description": "An always-listening voice agent that controls tvctl, with OptChat memory on pi-durable",
+  "description": "A voice conversation with your TV: OpenAI Realtime speech-to-speech driving tvctl",
   "license": "MIT",
   "type": "module",
   "private": true,
@@ -14,16 +14,10 @@
     "build:voice": "cd voice && swift build -c release"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.5.2",
-    "@earendil-works/pi-ai": "1.5.2",
-    "@earendil-works/pi-durable": "1.5.2",
-    "@earendil-works/pi-schema": "1.5.2",
-    "proper-lockfile": "4.1.2",
     "smol-toml": "1.9.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
-    "@types/proper-lockfile": "^4.1.4",
     "typescript": "^7.0.2"
   }
 }

@@ -1,9 +1,8 @@
-// tvctl as typed tools. Commands run with argv (never a shell); results are condensed to a short line,
-// so each tool result fits one OptChat node without a summarizing call.
+// The agent's tools (tvctl and web search) as Realtime function tools. tvctl runs with argv, never a
+// shell; results are condensed to a few short lines for the voice model.
 import { execFile } from "node:child_process";
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import { num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { log } from "./log.ts";
+import { webSearch } from "./web.ts";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -104,126 +103,167 @@ async function call(run: TvctlRun, args: string[], format: (stdout: string) => s
 	return format(result.stdout);
 }
 
-function text(value: string) {
-	return { output: [{ type: "text" as const, text: value }] };
-}
+type Schema = Record<string, unknown>;
+type Args = Record<string, unknown>;
 
-export function createTvctlExtension(run: TvctlRun) {
-	const tvctl = async (args: string[]) => text(await call(run, args));
-	const tools = [
-		defineTool({
+/** A Realtime function tool and its implementation. */
+export type Tool = {
+	name: string;
+	description: string;
+	parameters: Schema;
+	run: (args: Args) => Promise<string>;
+};
+
+const string = (description?: string): Schema => (description ? { type: "string", description } : { type: "string" });
+const choice = (values: (string | boolean)[], description?: string): Schema =>
+	typeof values[0] === "boolean" ? { type: "boolean", ...(description ? { description } : {}) } : { type: "string", enum: values, ...(description ? { description } : {}) };
+const object = (properties: Record<string, Schema>, required: string[] = []): Schema => ({
+	type: "object",
+	properties,
+	required,
+	additionalProperties: false,
+});
+const s = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
+
+export function createTools(run: TvctlRun, webModel: string): Tool[] {
+	const tvctl = (args: string[]) => call(run, args);
+	return [
+		{
 			name: "search_media",
 			description:
 				"Search a service for something to play; returns titles with URLs for play. Spotify kind: track, album, artist, playlist, episode or show (omit for a mix; artist plays their top songs). primevideo searches amazon.com; jp_store=true searches amazon.co.jp (Japanese account). A Netflix or Prime title URL plays like its Play button (a series continues its current episode).",
-			parameters: obj({
-				service: oneOf(["youtube", "spotify", "netflix", "primevideo", "crunchyroll"]),
-				query: str(),
-				kind: opt(oneOf(["track", "album", "artist", "playlist", "episode", "show"])),
-				jp_store: opt(oneOf([true, false])),
-			}),
-			execute: async (args) => {
-				const argv = ["search", args.service, args.query, "--limit", "5"];
-				if (args.kind && args.service === "spotify") argv.push("--kind", args.kind);
-				if (args.jp_store === true && args.service === "primevideo") argv.push("--site", "jp");
-				return text(await call(run, argv, condenseSearch));
+			parameters: object(
+				{
+					service: choice(["youtube", "spotify", "netflix", "primevideo", "crunchyroll"]),
+					query: string(),
+					kind: choice(["track", "album", "artist", "playlist", "episode", "show"]),
+					jp_store: choice([true, false]),
+				},
+				["service", "query"],
+			),
+			run: (a) => {
+				const argv = ["search", String(a.service), String(a.query), "--limit", "5"];
+				if (s(a.kind) && a.service === "spotify") argv.push("--kind", String(a.kind));
+				if (a.jp_store === true && a.service === "primevideo") argv.push("--site", "jp");
+				return call(run, argv, condenseSearch);
 			},
-		}),
-		defineTool({
+		},
+		{
 			name: "play",
-			description:
-				"Open a URL in the player (fullscreen by default) and start it. Use only URLs from search results or the user, never invented ones.",
-			parameters: obj({
-				url: str(),
-				start: opt(str({ description: "Start position, e.g. 90 or 1:30" })),
-				subtitles: opt(str({ description: "Subtitle language, e.g. ja" })),
-				windowed: opt(oneOf([true, false])),
-			}),
-			execute: (args) => {
-				const argv = ["open", args.url];
-				if (args.start) argv.push("--start", args.start);
-				if (args.subtitles) argv.push("--subtitles", args.subtitles);
-				if (args.windowed === true) argv.push("--windowed");
+			description: "Open a URL in the player (fullscreen by default) and start it. Use only URLs from search results or the user, never invented ones.",
+			parameters: object(
+				{
+					url: string(),
+					start: string("Start position, e.g. 90 or 1:30"),
+					subtitles: string("Subtitle language, e.g. ja"),
+					windowed: choice([true, false]),
+				},
+				["url"],
+			),
+			run: (a) => {
+				const argv = ["open", String(a.url)];
+				if (s(a.start)) argv.push("--start", String(a.start));
+				if (s(a.subtitles)) argv.push("--subtitles", String(a.subtitles));
+				if (a.windowed === true) argv.push("--windowed");
 				return tvctl(argv);
 			},
-		}),
-		defineTool({
+		},
+		{
 			name: "playback",
 			description: "Play, pause, toggle, next/previous item or episode, or close the player.",
-			parameters: obj({ action: oneOf(["play", "pause", "toggle", "next", "prev", "close"]) }),
-			execute: (args) => tvctl([args.action]),
-		}),
-		defineTool({
+			parameters: object({ action: choice(["play", "pause", "toggle", "next", "prev", "close"]) }, ["action"]),
+			run: (a) => tvctl([String(a.action)]),
+		},
+		{
 			name: "seek",
 			description: "Seek. Absolute: '1:30' or '90'. Relative: '+30' (forward) or '-10' (back), in seconds; '+5m' also works.",
-			parameters: obj({ position: str() }),
-			execute: (args) => {
-				const p = args.position.trim();
+			parameters: object({ position: string() }, ["position"]),
+			run: (a) => {
+				const p = String(a.position).trim();
 				if (p.startsWith("+")) return tvctl(["forward", p.slice(1)]);
 				if (p.startsWith("-")) return tvctl(["back", p.slice(1)]);
 				return tvctl(["seek", p]);
 			},
-		}),
-		defineTool({
+		},
+		{
 			name: "volume",
 			description: "Set the player volume (0-100), or mute / unmute.",
-			parameters: obj({ level: opt(num()), mute: opt(oneOf(["mute", "unmute"])) }),
-			execute: async (args) => {
-				if (args.mute !== undefined) return tvctl([args.mute]);
-				if (args.level === undefined) throw new Error("give level or mute");
-				return tvctl(["volume", String(Math.round(Math.min(100, Math.max(0, args.level))))]);
+			parameters: object({ level: { type: "number" }, mute: choice(["mute", "unmute"]) }),
+			run: async (a) => {
+				if (s(a.mute)) return tvctl([String(a.mute)]);
+				if (typeof a.level !== "number") throw new Error("give level or mute");
+				return tvctl(["volume", String(Math.round(Math.min(100, Math.max(0, a.level))))]);
 			},
-		}),
-		defineTool({
+		},
+		{
 			name: "subtitles",
 			description: "Subtitles: a language code ('ja', 'en'; auto-translated if missing), 'on', 'off', or 'list'.",
-			parameters: obj({ value: str() }),
-			execute: (args) => tvctl(["subtitles", args.value]),
-		}),
-		defineTool({
+			parameters: object({ value: string() }, ["value"]),
+			run: (a) => tvctl(["subtitles", String(a.value)]),
+		},
+		{
 			name: "audio_track",
 			description: "Audio track (dubbing) by language code, or 'list'.",
-			parameters: obj({ value: str() }),
-			execute: (args) => tvctl(["audio", args.value]),
-		}),
-		defineTool({
+			parameters: object({ value: string() }, ["value"]),
+			run: (a) => tvctl(["audio", String(a.value)]),
+		},
+		{
 			name: "speed",
 			description: "Playback speed, e.g. 1, 1.25, 1.5.",
-			parameters: obj({ rate: num() }),
-			execute: (args) => tvctl(["speed", String(args.rate)]),
-		}),
-		defineTool({
+			parameters: object({ rate: { type: "number" } }, ["rate"]),
+			run: (a) => tvctl(["speed", String(a.rate)]),
+		},
+		{
 			name: "quality",
 			description: "Video quality; values are in status (available qualities), e.g. hd1080.",
-			parameters: obj({ value: str() }),
-			execute: (args) => tvctl(["quality", args.value]),
-		}),
-		defineTool({
+			parameters: object({ value: string() }, ["value"]),
+			run: (a) => tvctl(["quality", String(a.value)]),
+		},
+		{
 			name: "window",
 			description:
 				"Move or resize the player window. layout: left, right, top, bottom, top-left, top-right, bottom-left, bottom-right, center, maximize. size: e.g. 1280x720.",
-			parameters: obj({
-				layout: opt(oneOf(["left", "right", "top", "bottom", "top-left", "top-right", "bottom-left", "bottom-right", "center", "maximize"])),
-				size: opt(str()),
+			parameters: object({
+				layout: choice(["left", "right", "top", "bottom", "top-left", "top-right", "bottom-left", "bottom-right", "center", "maximize"]),
+				size: string(),
 			}),
-			execute: (args) => {
+			run: (a) => {
 				const argv = ["window"];
-				if (args.layout) argv.push("--layout", args.layout);
-				if (args.size) argv.push("--size", args.size);
+				if (s(a.layout)) argv.push("--layout", String(a.layout));
+				if (s(a.size)) argv.push("--size", String(a.size));
 				return tvctl(argv);
 			},
-		}),
-		defineTool({
+		},
+		{
 			name: "fullscreen",
 			description: "Fullscreen on, off, or toggle.",
-			parameters: obj({ mode: oneOf(["on", "off", "toggle"]) }),
-			execute: (args) => tvctl(args.mode === "toggle" ? ["fullscreen"] : ["fullscreen", args.mode]),
-		}),
-		defineTool({
+			parameters: object({ mode: choice(["on", "off", "toggle"]) }, ["mode"]),
+			run: (a) => tvctl(a.mode === "toggle" ? ["fullscreen"] : ["fullscreen", String(a.mode)]),
+		},
+		{
 			name: "status",
 			description: "What is playing now: service, title, state, position, volume, subtitles.",
-			parameters: obj({}),
-			execute: () => tvctl(["status"]),
-		}),
+			parameters: object({}),
+			run: () => tvctl(["status"]),
+		},
+		{
+			name: "web_search",
+			description:
+				"Search the web: facts, news, schedules, or which title/song/channel the user means before search_media. Not for finding playable URLs (use search_media).",
+			parameters: object({ query: string() }, ["query"]),
+			run: (a) => webSearch(String(a.query), webModel),
+		},
 	];
-	return defineExtension({ name: "tvctl", tools });
+}
+
+/** Runs a tool call; errors become the tool's output so the model can say what went wrong. */
+export async function runTool(tools: Tool[], name: string, argsJson: string): Promise<string> {
+	const tool = tools.find((t) => t.name === name);
+	if (tool === undefined) return `error: unknown tool ${name}`;
+	try {
+		const args = (argsJson ? JSON.parse(argsJson) : {}) as Args;
+		return await tool.run(args);
+	} catch (error) {
+		return `error: ${(error as Error).message}`;
+	}
 }
