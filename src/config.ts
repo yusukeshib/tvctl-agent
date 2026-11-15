@@ -30,6 +30,14 @@ export type Config = {
 	};
 	/** OpenAI model for the web_search tool (Responses API web search). */
 	webSearchModel: string;
+	/** The trace of each run (trace.ts). */
+	log: {
+		trace: boolean;
+		dir: string;
+		/** Also save the audio of each turn (WAV). */
+		audio: boolean;
+		keepDays: number;
+	};
 	memory: {
 		/** How much of the recent conversation (characters) each new session starts with. */
 		recentChars: number;
@@ -74,6 +82,7 @@ export function parseConfig(text: string): Config {
 	const speech = table(root.speech, "speech");
 	const audio = table(root.audio, "audio");
 	const memory = table(root.memory, "memory");
+	const logs = table(root.log, "log");
 	const paths = table(root.paths, "paths");
 	const eagerness = get(realtime, "eagerness", "string", "auto");
 	if (!["low", "medium", "high", "auto"].includes(eagerness)) throw new Error(`config: unknown eagerness ${eagerness}`);
@@ -96,6 +105,12 @@ export function parseConfig(text: string): Config {
 			duckLevel: get<number | undefined>(speech, "duck_level", "number", 10),
 		},
 		webSearchModel: get(table(root.model, "model"), "web_search", "string", "gpt-5.4-mini"),
+		log: {
+			trace: get(logs, "trace", "boolean", true),
+			dir: expand(get(logs, "dir", "string", "~/Library/Logs/tvctl-agent/traces")),
+			audio: get(logs, "audio", "boolean", false),
+			keepDays: get(logs, "keep_days", "number", 14),
+		},
 		memory: {
 			recentChars: get(memory, "recent_chars", "number", 6000),
 		},

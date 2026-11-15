@@ -1,7 +1,7 @@
 // One OpenAI Realtime conversation (speech to speech): the model hears the microphone, decides when the
 // user has finished (semantic VAD), answers with its voice, calls our tools, and stops when interrupted.
 // Sessions last at most 60 minutes; we reconnect and start the new one with the recent conversation.
-import { log } from "./log.ts";
+import { Diagnostics } from "./diagnostics.ts";
 import type { Memory } from "./memory.ts";
 import { openaiKey } from "./openai.ts";
 import { runTool, type Tool } from "./tools.ts";
@@ -31,12 +31,16 @@ export type RealtimeOptions = {
 	memory: Memory;
 	/** Text only (tests): no audio in or out. */
 	text?: boolean;
+	/** The logs (readable lines and the trace). */
+	diagnostics?: Diagnostics;
 };
 
 export class Realtime {
 	private readonly options: RealtimeOptions;
 	private readonly speaker: Speaker | undefined;
+	private readonly diag: Diagnostics;
 	private ws: WebSocket | undefined;
+	private session = 0;
 	private openedAt = 0;
 	private lastActivity = 0;
 	private closing = false;
@@ -44,7 +48,6 @@ export class Realtime {
 	/** Assistant items whose audio was cut off: further deltas are dropped. */
 	private readonly cut = new Set<string>();
 	private playing: { itemId: string; contentIndex: number } | undefined;
-	private speechStartedAt = 0;
 	private readonly timer: NodeJS.Timeout;
 	/** Text mode: resolves when a response finishes without tool calls. */
 	private onIdle: (() => void) | undefined;
@@ -52,10 +55,11 @@ export class Realtime {
 	constructor(options: RealtimeOptions, speaker?: Speaker) {
 		this.options = options;
 		this.speaker = speaker;
+		this.diag = options.diagnostics ?? new Diagnostics(undefined);
 		// Renew the session ahead of the 60-minute limit, at a quiet moment.
 		this.timer = setInterval(() => {
 			if (this.ws && Date.now() - this.openedAt > 50 * 60_000 && this.busy === 0 && Date.now() - this.lastActivity > 15_000) {
-				log("realtime", "renewing the session");
+				this.diag.note("session", `#${this.session} renewing (age ${Math.round((Date.now() - this.openedAt) / 60_000)} min)`);
 				this.ws.close();
 			}
 		}, 10_000);
@@ -70,8 +74,10 @@ export class Realtime {
 			ws.onopen = () => {
 				this.ws = ws;
 				this.openedAt = Date.now();
-				this.send(this.sessionUpdate());
-				log("realtime", `connected (${this.options.model})`);
+				this.session++;
+				const update = this.sessionUpdate();
+				this.diag.connected(this.session, this.options.model, String((update.session as { instructions: string }).instructions));
+				this.send(update);
 				resolve();
 			};
 			ws.onerror = (e) => {
@@ -83,8 +89,8 @@ export class Realtime {
 				this.ws = undefined;
 				this.playing = undefined;
 				this.speaker?.stop();
+				this.diag.closed(e.code, e.reason, !this.closing);
 				if (this.closing) return;
-				log("realtime", `closed (${e.code} ${e.reason}); reconnecting`);
 				this.reconnect(1000);
 			};
 		});
@@ -93,7 +99,7 @@ export class Realtime {
 	private reconnect(delayMs: number): void {
 		setTimeout(() => {
 			this.connect().catch((error: unknown) => {
-				log("realtime", (error as Error).message);
+				this.diag.note("session", `reconnect failed: ${(error as Error).message}; retrying in ${Math.min(delayMs * 2, 30_000) / 1000} s`);
 				this.reconnect(Math.min(delayMs * 2, 30_000));
 			});
 		}, delayMs);
@@ -107,17 +113,19 @@ export class Realtime {
 
 	/** Microphone audio, PCM16 24 kHz mono, base64. Dropped while disconnected. */
 	appendAudio(pcm: string): void {
-		if (this.ws?.readyState === WebSocket.OPEN) this.send({ type: "input_audio_buffer.append", audio: pcm });
+		if (this.ws?.readyState !== WebSocket.OPEN) return;
+		this.diag.inputAudio(pcm);
+		this.send({ type: "input_audio_buffer.append", audio: pcm });
 	}
 
 	/** The speaker stopped (interrupted): drop the unheard part of the answer from the conversation. */
 	stopped(itemId: string, playedMs: number): void {
 		this.cut.add(itemId);
+		this.diag.interrupted(itemId, playedMs);
 		if (this.playing?.itemId !== itemId) return;
 		const contentIndex = this.playing.contentIndex;
 		this.playing = undefined;
 		this.send({ type: "conversation.item.truncate", item_id: itemId, content_index: contentIndex, audio_end_ms: Math.max(0, playedMs) });
-		log("realtime", `interrupted after ${playedMs} ms`);
 	}
 
 	/** The speaker finished the item: nothing left to interrupt. */
@@ -136,7 +144,9 @@ export class Realtime {
 	}
 
 	private send(event: Event): void {
-		this.ws?.send(JSON.stringify(event));
+		if (this.ws === undefined) return;
+		this.diag.client(event);
+		this.ws.send(JSON.stringify(event));
 	}
 
 	private sessionUpdate(): Event {
@@ -168,10 +178,10 @@ export class Realtime {
 	}
 
 	private handle(event: Event): void {
+		this.diag.server(event);
 		switch (event.type) {
 			case "input_audio_buffer.speech_started":
 				this.lastActivity = Date.now();
-				this.speechStartedAt = performance.now();
 				// The user talks over the answer: stop at once (the server cancels the response).
 				if (this.playing) this.speaker?.stop();
 				break;
@@ -179,9 +189,7 @@ export class Realtime {
 				this.lastActivity = Date.now();
 				break;
 			case "conversation.item.input_audio_transcription.completed": {
-				const text = String(event.transcript ?? "").trim();
-				log("heard", text);
-				this.options.memory.add("user", text);
+				this.options.memory.add("user", String(event.transcript ?? ""));
 				break;
 			}
 			case "response.created":
@@ -190,11 +198,7 @@ export class Realtime {
 			case "response.output_audio.delta": {
 				const itemId = String(event.item_id);
 				if (this.cut.has(itemId)) break;
-				if (this.playing?.itemId !== itemId) {
-					this.playing = { itemId, contentIndex: Number(event.content_index ?? 0) };
-					if (this.speechStartedAt > 0) log("realtime", `first audio ${(performance.now() - this.speechStartedAt).toFixed(0)} ms after speech start`);
-					this.speechStartedAt = 0;
-				}
+				if (this.playing?.itemId !== itemId) this.playing = { itemId, contentIndex: Number(event.content_index ?? 0) };
 				this.speaker?.audio(itemId, String(event.delta));
 				break;
 			}
@@ -205,18 +209,13 @@ export class Realtime {
 			}
 			case "response.output_audio_transcript.done":
 			case "response.output_text.done": {
-				const text = String(event.transcript ?? event.text ?? "").trim();
-				log("answer", text);
-				this.options.memory.add("assistant", text);
+				this.options.memory.add("assistant", String(event.transcript ?? event.text ?? ""));
 				break;
 			}
 			case "response.done":
 				this.busy = Math.max(0, this.busy - 1);
 				this.lastActivity = Date.now();
 				void this.finish(event.response as { status?: string; output?: OutputItem[]; status_details?: unknown });
-				break;
-			case "error":
-				log("realtime", `error: ${JSON.stringify(event.error)}`);
 				break;
 			default:
 				break;
@@ -225,7 +224,6 @@ export class Realtime {
 
 	/** Runs the response's tool calls, then lets the model continue with their results. */
 	private async finish(response: { status?: string; output?: OutputItem[]; status_details?: unknown }): Promise<void> {
-		if (response.status === "failed") log("realtime", `response failed: ${JSON.stringify(response.status_details)}`);
 		const calls = (response.output ?? []).filter((item) => item.type === "function_call");
 		if (calls.length === 0) {
 			if (response.status !== "cancelled") this.onIdle?.();
@@ -235,7 +233,9 @@ export class Realtime {
 		try {
 			for (const call of calls) {
 				this.options.memory.add("tool", `${call.name} ${call.arguments ?? ""}`);
+				const started = performance.now();
 				const output = await runTool(this.options.tools, String(call.name), String(call.arguments ?? ""));
+				this.diag.tool(String(call.name), String(call.arguments ?? ""), output, performance.now() - started);
 				this.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: call.call_id, output } });
 			}
 		} finally {

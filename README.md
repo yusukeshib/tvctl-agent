@@ -45,6 +45,24 @@ Every turn (what you said, the spoken replies, tool calls) is appended to
 session lasts at most 60 minutes; the agent renews it at a quiet moment, and
 each new session starts with the latest part of the log (`memory.recent_chars`).
 
+## Logs
+
+`agent.log` has one readable line per event: each turn of speech (`[turn]`), what the model heard
+(`[heard]`), each response with its status, latency and token use (`[response]`), the context it had
+(item counts), spoken answers (`[answer]`), interruptions with how much was heard (`[interrupt]`), tool
+runs with their result and duration (`[tool]`), and session starts, renewals and reconnects (`[session]`).
+
+The full trace of each run is in `~/Library/Logs/tvctl-agent/traces/<run>/events.jsonl`: every
+Realtime event both ways (the instructions included, audio left out) plus the agent's own events, such
+as `agent.context` (the conversation the model had when each response started). With `log.audio = true`
+the run also keeps WAV files of what the model heard and said. For example:
+
+```sh
+cd ~/Library/Logs/tvctl-agent/traces/$(ls -t ~/Library/Logs/tvctl-agent/traces | head -1)
+jq -c 'select(.type == "response.done") | .response | {status, status_details, usage}' events.jsonl
+jq -c 'select(.type == "agent.context") | .items' events.jsonl | tail -1
+```
+
 ## voice helper
 
 ```sh

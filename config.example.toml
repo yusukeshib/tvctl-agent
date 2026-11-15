@@ -28,6 +28,16 @@ duck_level = 10
 # OpenAI model for the web_search tool.
 web_search = "gpt-5.4-mini"
 
+[log]
+# The trace of each run: every Realtime event (without audio), tool runs, interruptions, sessions.
+# One directory per run: <dir>/<run>/events.jsonl. Readable lines go to agent.log either way.
+trace = true
+dir = "~/Library/Logs/tvctl-agent/traces"
+# Also save what the model heard (each user turn) and what it said, as WAV files in <run>/audio/.
+audio = false
+# Runs older than this are deleted at start.
+keep_days = 14
+
 [memory]
 # Each new session (they last at most 60 minutes) starts with this much of the recent conversation.
 recent_chars = 6000

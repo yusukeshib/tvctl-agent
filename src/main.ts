@@ -6,21 +6,39 @@ import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { defaultConfigPath, loadConfig } from "./config.ts";
+import { Diagnostics } from "./diagnostics.ts";
 import { buildInstructions } from "./instructions.ts";
 import { log } from "./log.ts";
 import { Memory } from "./memory.ts";
 import { openaiKey } from "./openai.ts";
 import { Realtime } from "./realtime.ts";
 import { createTools, execTvctl } from "./tools.ts";
+import { Trace } from "./trace.ts";
 
 function flag(name: string): string | undefined {
 	const i = process.argv.indexOf(name);
 	return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-const config = await loadConfig(flag("--config") ?? defaultConfigPath);
+const configPath = flag("--config") ?? defaultConfigPath;
+const config = await loadConfig(configPath);
+const trace = config.log.trace ? new Trace({ dir: config.log.dir, audio: config.log.audio, keepDays: config.log.keepDays }) : undefined;
+const diagnostics = new Diagnostics(trace);
+const { realtime: rt, audio } = config;
+diagnostics.note(
+	"main",
+	`start (config ${configPath}): ${rt.model}, voice ${rt.voice}, eagerness ${rt.eagerness}, noise reduction ${rt.noiseReduction}, echo cancellation ${audio.echoCancellation ? "on" : "off"}; trace ${trace ? `${trace.dir}${trace.audio ? " (with audio)" : ""}` : "off"}`,
+	{ config: { ...config, instructions: config.instructions ?? null } },
+);
+process.on("uncaughtException", (error) => {
+	diagnostics.note("main", `crashed: ${error.stack ?? error.message}`);
+	process.exit(1);
+});
+process.on("unhandledRejection", (error) => {
+	diagnostics.note("main", `unhandled rejection: ${(error as Error)?.stack ?? String(error)}`);
+});
 // launchd starts without the shell's environment: read the key from the login shell.
-if (openaiKey() === undefined) log("main", "OPENAI_API_KEY not found");
+if (openaiKey() === undefined) diagnostics.note("main", "OPENAI_API_KEY not found");
 
 const memory = new Memory(config.paths.memory);
 const tools = createTools(execTvctl(config.paths.tvctl), config.webSearchModel);
@@ -29,6 +47,7 @@ const options = {
 	instructions: () => buildInstructions(memory.recent(config.memory.recentChars), config.instructions),
 	tools,
 	memory,
+	diagnostics,
 };
 
 const once = flag("--text");
@@ -47,7 +66,7 @@ try {
 		await run(config.paths.tvctl, ["duck", "on", "--apps", "tvctl-voice", "--level", String(config.speech.duckLevel)]);
 	}
 } catch (error) {
-	log("main", `tvctl setup failed: ${(error as Error).message}`);
+	diagnostics.note("main", `tvctl setup failed: ${(error as Error).message}`);
 }
 
 // The microphone's peak level, logged once a minute (a silent microphone is the usual reason for no answers).
@@ -59,7 +78,7 @@ function meter(pcm: string): void {
 	chunks++;
 }
 setInterval(() => {
-	log("mic", `peak ${peak > 0 ? (20 * Math.log10(peak / 32768)).toFixed(0) : "-inf"} dBFS over ${chunks} chunks`);
+	diagnostics.note("mic", `peak ${peak > 0 ? (20 * Math.log10(peak / 32768)).toFixed(0) : "-inf"} dBFS over ${chunks} chunks`);
 	peak = 0;
 	chunks = 0;
 }, 15_000).unref();
@@ -91,14 +110,17 @@ createInterface({ input: helper.stdout }).on("line", (line) => {
 			realtime.stopped(String(event.id), Number(event.played_ms));
 			break;
 		case "spoken":
+			trace?.write("agent", { type: "agent.voice", event });
 			realtime.spoken(String(event.id));
 			break;
 		default:
+			// ready, speaking, level, device_lost, error
 			log("voice", line);
+			trace?.write("agent", { type: "agent.voice", event });
 	}
 });
 helper.on("exit", (code) => {
-	log("main", `voice helper exited (${code})`);
+	diagnostics.note("main", `voice helper exited (${code})`);
 	process.exit(1);
 });
 
