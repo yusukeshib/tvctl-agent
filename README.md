@@ -45,6 +45,19 @@ Every turn (what you said, the spoken replies, tool calls) is appended to
 session lasts at most 60 minutes; the agent renews it at a quiet moment, and
 each new session starts with the latest part of the log (`memory.recent_chars`).
 
+## Turns
+
+The Realtime session detects when you stop speaking, but the agent answers only after the transcript
+shows the turn is meant for it: empty turns, fillers ("ええ", "うん") and fragments in other scripts or
+lone foreign words (what the microphone makes of TV audio and room noise) are logged as `[ignored]` and
+get no answer. Before each answer the model is told what the player shows (`Player now: ...`) when
+that changed, so "次の曲" or "これ何?" are read against what is on.
+
+When you ask it to remember something lasting ("返事は最小限に"), the agent saves a note in
+`notes.txt` next to the conversation log; every session's instructions include all notes, so they do
+not scroll out like the conversation does. An answer you talk over is remembered only as far as you
+heard it.
+
 ## Logs
 
 `agent.log` has one readable line per event: each turn of speech (`[turn]`), what the model heard

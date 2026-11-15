@@ -5,6 +5,7 @@ import { Diagnostics } from "./diagnostics.ts";
 import type { Memory } from "./memory.ts";
 import { openaiKey } from "./openai.ts";
 import { runTool, type Tool } from "./tools.ts";
+import { judgeUtterance } from "./utterance.ts";
 
 type Event = { type: string; [key: string]: unknown };
 type OutputItem = { type: string; id?: string; name?: string; call_id?: string; arguments?: string };
@@ -33,6 +34,8 @@ export type RealtimeOptions = {
 	text?: boolean;
 	/** The logs (readable lines and the trace). */
 	diagnostics?: Diagnostics;
+	/** What the player shows now (one line), told to the model before it answers a turn when it changed. */
+	playerState?: () => Promise<string>;
 };
 
 export class Realtime {
@@ -48,6 +51,13 @@ export class Realtime {
 	/** Assistant items whose audio was cut off: further deltas are dropped. */
 	private readonly cut = new Set<string>();
 	private playing: { itemId: string; contentIndex: number } | undefined;
+	/** A user turn arrived while a response or tool was running: answer it when they finish. */
+	private pendingAnswer = false;
+	/** The player state last told to the model this session. */
+	private toldState = "";
+	/** Assistant answers waiting to be written to memory until we know how much was heard. */
+	private unheard = new Map<string, { text?: string; heardRatio?: number }>();
+	private audioBytes = new Map<string, number>();
 	private readonly timer: NodeJS.Timeout;
 	/** Text mode: resolves when a response finishes without tool calls. */
 	private onIdle: (() => void) | undefined;
@@ -75,6 +85,10 @@ export class Realtime {
 				this.ws = ws;
 				this.openedAt = Date.now();
 				this.session++;
+				this.toldState = "";
+				this.pendingAnswer = false;
+				this.unheard = new Map();
+				this.audioBytes = new Map();
 				const update = this.sessionUpdate();
 				this.diag.connected(this.session, this.options.model, String((update.session as { instructions: string }).instructions));
 				this.send(update);
@@ -122,6 +136,8 @@ export class Realtime {
 	stopped(itemId: string, playedMs: number): void {
 		this.cut.add(itemId);
 		this.diag.interrupted(itemId, playedMs);
+		const totalMs = (this.audioBytes.get(itemId) ?? 0) / 48;
+		this.heard(itemId, totalMs > 0 ? Math.min(1, playedMs / totalMs) : 0);
 		if (this.playing?.itemId !== itemId) return;
 		const contentIndex = this.playing.contentIndex;
 		this.playing = undefined;
@@ -130,6 +146,7 @@ export class Realtime {
 
 	/** The speaker finished the item: nothing left to interrupt. */
 	spoken(itemId: string): void {
+		this.heard(itemId, 1);
 		if (this.playing?.itemId === itemId) this.playing = undefined;
 	}
 
@@ -139,8 +156,43 @@ export class Realtime {
 			this.onIdle = resolve;
 			this.options.memory.add("user", text);
 			this.send({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } });
-			this.send({ type: "response.create" });
+			void this.answer();
 		});
+	}
+
+	/** Writes an answer to memory as far as it was heard (ratio of its audio), once text and outcome are known. */
+	private heard(itemId: string, ratio: number | undefined, text?: string): void {
+		const entry = this.unheard.get(itemId) ?? {};
+		if (text !== undefined) entry.text = text;
+		if (ratio !== undefined && entry.heardRatio === undefined) entry.heardRatio = ratio;
+		if (entry.text === undefined || entry.heardRatio === undefined) {
+			this.unheard.set(itemId, entry);
+			return;
+		}
+		this.unheard.delete(itemId);
+		this.options.memory.add("assistant", heardPart(entry.text, entry.heardRatio));
+	}
+
+	/** Asks the model to answer the latest user turn, first telling it what the player shows if that changed. */
+	private async answer(): Promise<void> {
+		if (this.busy > 0) {
+			this.pendingAnswer = true;
+			return;
+		}
+		this.pendingAnswer = false;
+		this.busy++;
+		try {
+			if (this.options.playerState) {
+				const state = await this.options.playerState().catch((error: unknown) => `unknown (${(error as Error).message})`);
+				if (state !== this.toldState) {
+					this.toldState = state;
+					this.send({ type: "conversation.item.create", item: { type: "message", role: "system", content: [{ type: "input_text", text: `Player now: ${state}` }] } });
+				}
+			}
+		} finally {
+			this.busy--;
+		}
+		this.send({ type: "response.create" });
 	}
 
 	private send(event: Event): void {
@@ -169,7 +221,8 @@ export class Realtime {
 					format: { type: "audio/pcm", rate: 24000 },
 					noise_reduction: o.noiseReduction === "off" ? null : { type: o.noiseReduction },
 					transcription: { model: o.transcribeModel, language: o.language },
-					turn_detection: { type: "semantic_vad", eagerness: o.eagerness, create_response: true, interrupt_response: true },
+					// We create responses ourselves once the transcript shows the turn is meant for us (utterance.ts).
+					turn_detection: { type: "semantic_vad", eagerness: o.eagerness, create_response: false, interrupt_response: true },
 				},
 				output: { format: { type: "audio/pcm", rate: 24000 }, voice: o.voice },
 			};
@@ -189,7 +242,14 @@ export class Realtime {
 				this.lastActivity = Date.now();
 				break;
 			case "conversation.item.input_audio_transcription.completed": {
-				this.options.memory.add("user", String(event.transcript ?? ""));
+				const text = String(event.transcript ?? "");
+				const verdict = judgeUtterance(text, this.options.language);
+				if (!verdict.answer) {
+					this.diag.note("ignored", `${String(event.item_id)}: "${text.trim()}" (${verdict.reason})`, { item_id: event.item_id, transcript: text, reason: verdict.reason });
+					break;
+				}
+				this.options.memory.add("user", text);
+				void this.answer();
 				break;
 			}
 			case "response.created":
@@ -199,6 +259,7 @@ export class Realtime {
 				const itemId = String(event.item_id);
 				if (this.cut.has(itemId)) break;
 				if (this.playing?.itemId !== itemId) this.playing = { itemId, contentIndex: Number(event.content_index ?? 0) };
+				this.audioBytes.set(itemId, (this.audioBytes.get(itemId) ?? 0) + Math.floor((String(event.delta).length * 3) / 4));
 				this.speaker?.audio(itemId, String(event.delta));
 				break;
 			}
@@ -209,7 +270,9 @@ export class Realtime {
 			}
 			case "response.output_audio_transcript.done":
 			case "response.output_text.done": {
-				this.options.memory.add("assistant", String(event.transcript ?? event.text ?? ""));
+				const text = String(event.transcript ?? event.text ?? "");
+				// Text has no playback to wait for; speech is remembered as far as it was heard.
+				this.heard(String(event.item_id), this.speaker && !this.options.text ? undefined : 1, text);
 				break;
 			}
 			case "response.done":
@@ -227,8 +290,11 @@ export class Realtime {
 		const calls = (response.output ?? []).filter((item) => item.type === "function_call");
 		if (calls.length === 0) {
 			if (response.status !== "cancelled") this.onIdle?.();
+			if (this.pendingAnswer && this.busy === 0) void this.answer();
 			return;
 		}
+		// The response that follows the tool results also answers any turn that arrived meanwhile.
+		this.pendingAnswer = false;
 		this.busy++;
 		try {
 			for (const call of calls) {
@@ -243,4 +309,12 @@ export class Realtime {
 		}
 		this.send({ type: "response.create" });
 	}
+}
+
+/** The heard part of an answer, marked when it was cut off. */
+export function heardPart(text: string, ratio: number): string {
+	const value = text.trim();
+	if (ratio >= 0.98) return value;
+	const kept = value.slice(0, Math.ceil(value.length * Math.max(0, ratio))).trim();
+	return kept === "" ? "" : `${kept}…（ここで遮られた）`;
 }

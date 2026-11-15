@@ -2,6 +2,7 @@
 // shell; results are condensed to a few short lines for the voice model.
 import { execFile } from "node:child_process";
 import { log } from "./log.ts";
+import { formatNotes, type Notes } from "./notes.ts";
 import { webSearch } from "./web.ts";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -37,7 +38,7 @@ function brief(value: Json | undefined): string {
 }
 
 /** One short line describing tvctl's JSON output. */
-export function condense(output: string): string {
+export function condense(output: string, options: { position?: boolean } = {}): string {
 	let data: Json;
 	try {
 		data = JSON.parse(output) as Json;
@@ -56,7 +57,8 @@ export function condense(output: string): string {
 		if (episode !== undefined) parts.push(`episode ${brief(episode.season ?? "")}-${brief(episode.number ?? "")} ${brief(episode.title ?? "")}`.trim());
 		const at = clock(player.current_time);
 		const total = clock(player.duration);
-		if (player.state !== undefined) parts.push(`${brief(player.state)}${at ? ` ${at}${total ? `/${total}` : ""}` : ""}`);
+		const position = options.position !== false && at ? ` ${at}${total ? `/${total}` : ""}` : "";
+		if (player.state !== undefined) parts.push(`${brief(player.state)}${position}`);
 		if (player.volume !== undefined) parts.push(`volume ${brief(player.volume)}${player.muted === true ? " (muted)" : ""}`);
 		const subtitles = obj_(player.subtitles);
 		parts.push(`subtitles ${subtitles ? brief(subtitles.language ?? subtitles.id ?? subtitles.name ?? "on") : "off"}`);
@@ -125,9 +127,27 @@ const object = (properties: Record<string, Schema>, required: string[] = []): Sc
 });
 const s = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
 
-export function createTools(run: TvctlRun, webModel: string): Tool[] {
+export function createTools(run: TvctlRun, webModel: string, notes?: Notes): Tool[] {
 	const tvctl = (args: string[]) => call(run, args);
+	const memoryTools: Tool[] = notes
+		? [
+				{
+					name: "remember",
+					description:
+						"Save a lasting preference or fact the user wants kept (how to reply, favorite services, names). Saved notes are in every future session's instructions. Returns all notes, numbered.",
+					parameters: object({ note: string("One short sentence, e.g. 返事は最小限にする") }, ["note"]),
+					run: async (a) => formatNotes(notes.add(String(a.note))),
+				},
+				{
+					name: "forget",
+					description: "Delete a saved note by its number (from the instructions or remember's result) when the user takes it back.",
+					parameters: object({ number: { type: "integer" } }, ["number"]),
+					run: async (a) => formatNotes(notes.remove(Number(a.number))),
+				},
+			]
+		: [];
 	return [
+		...memoryTools,
 		{
 			name: "search_media",
 			description:
@@ -254,6 +274,13 @@ export function createTools(run: TvctlRun, webModel: string): Tool[] {
 			run: (a) => webSearch(String(a.query), webModel),
 		},
 	];
+}
+
+/** What the player shows, without the position (which changes every second), for the model's context. */
+export async function playerState(run: TvctlRun): Promise<string> {
+	const result = await run(["status"]);
+	if (!result.ok) return result.stderr.replace(/^error:\s*/, "").trim().slice(0, 200) || "unknown";
+	return condense(result.stdout, { position: false });
 }
 
 /** Runs a tool call; errors become the tool's output so the model can say what went wrong. */
