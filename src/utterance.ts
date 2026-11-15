@@ -14,8 +14,10 @@ export function judgeUtterance(transcript: string, language: string): Verdict {
 	const bare = text.replace(/[\s\p{P}\p{S}]/gu, "");
 	if (bare === "") return { answer: false, reason: "empty" };
 	if (fillers.has(bare)) return { answer: false, reason: "filler" };
+	// The script heuristics are for Japanese conversations only; other languages get the filler check alone.
+	if (!language.startsWith("ja")) return { answer: true };
 	if (otherScripts.test(bare)) return { answer: false, reason: "another language (likely noise)" };
-	if (language.startsWith("ja") && !japanese.test(bare)) {
+	if (!japanese.test(bare)) {
 		// A Japanese speaker may say an English title, but a lone foreign word is usually noise.
 		const words = text.split(/\s+/).filter((w) => /\p{L}/u.test(w));
 		if (words.length < 3) return { answer: false, reason: "no Japanese (likely noise)" };

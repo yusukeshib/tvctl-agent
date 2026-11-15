@@ -114,6 +114,8 @@ export type Tool = {
 	description: string;
 	parameters: Schema;
 	run: (args: Args) => Promise<string>;
+	/** A successful call changes the session instructions (the notes): the running session is updated. */
+	changesInstructions?: boolean;
 };
 
 const string = (description?: string): Schema => (description ? { type: "string", description } : { type: "string" });
@@ -137,12 +139,14 @@ export function createTools(run: TvctlRun, webModel: string, notes?: Notes): Too
 						"Save a lasting preference or fact the user wants kept (how to reply, favorite services, names). Saved notes are in every future session's instructions. Returns all notes, numbered.",
 					parameters: object({ note: string("One short sentence, e.g. 返事は最小限にする") }, ["note"]),
 					run: async (a) => formatNotes(notes.add(String(a.note))),
+					changesInstructions: true,
 				},
 				{
 					name: "forget",
 					description: "Delete a saved note by its number (from the instructions or remember's result) when the user takes it back.",
 					parameters: object({ number: { type: "integer" } }, ["number"]),
 					run: async (a) => formatNotes(notes.remove(Number(a.number))),
+					changesInstructions: true,
 				},
 			]
 		: [];

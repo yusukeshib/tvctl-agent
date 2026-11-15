@@ -11,15 +11,19 @@ export class Notes {
 		mkdirSync(dirname(path), { recursive: true });
 	}
 
+	/** Only a missing file means no notes; other read errors propagate so nothing overwrites the file. */
 	list(): string[] {
+		let text: string;
 		try {
-			return readFileSync(this.path, "utf8")
-				.split("\n")
-				.map((line) => line.trim())
-				.filter((line) => line !== "");
-		} catch {
-			return [];
+			text = readFileSync(this.path, "utf8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+			throw error;
 		}
+		return text
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line !== "");
 	}
 
 	add(note: string): string[] {
