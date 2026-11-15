@@ -12,7 +12,8 @@ import { log } from "./log.ts";
 import { Memory } from "./memory.ts";
 import { openaiKey } from "./openai.ts";
 import { Realtime } from "./realtime.ts";
-import { createTools, execTvctl } from "./tools.ts";
+import { Notes } from "./notes.ts";
+import { createTools, execTvctl, playerState } from "./tools.ts";
 import { Trace } from "./trace.ts";
 
 function flag(name: string): string | undefined {
@@ -51,13 +52,16 @@ process.on("unhandledRejection", (error) => {
 if (openaiKey() === undefined) diagnostics.note("main", "OPENAI_API_KEY not found");
 
 const memory = new Memory(config.paths.memory);
-const tools = createTools(execTvctl(config.paths.tvctl), config.webSearchModel);
+const notes = new Notes(config.paths.notes);
+const tvctl = execTvctl(config.paths.tvctl);
+const tools = createTools(tvctl, config.webSearchModel, notes);
 const options = {
 	...config.realtime,
-	instructions: () => buildInstructions(memory.recent(config.memory.recentChars), config.instructions),
+	instructions: () => buildInstructions(memory.recent(config.memory.recentChars), config.instructions, notes.list()),
 	tools,
 	memory,
 	diagnostics,
+	playerState: () => playerState(tvctl),
 };
 
 const once = flag("--text");

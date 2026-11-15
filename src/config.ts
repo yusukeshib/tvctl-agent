@@ -45,6 +45,8 @@ export type Config = {
 	paths: {
 		/** The conversation log (JSON lines), the agent's memory across sessions. */
 		memory: string;
+		/** Lasting notes (the remember tool), in every session's instructions. */
+		notes: string;
 		tvctl: string;
 		voice: string;
 	};
@@ -116,6 +118,7 @@ export function parseConfig(text: string): Config {
 		},
 		paths: {
 			memory: expand(get(paths, "memory", "string", "~/Library/Application Support/tvctl-agent/conversation.jsonl")),
+			notes: expand(get(paths, "notes", "string", "~/Library/Application Support/tvctl-agent/notes.txt")),
 			tvctl: expand(get(paths, "tvctl", "string", "tvctl")),
 			voice: expand(get(paths, "voice", "string", join(repoRoot, "voice/.build/release/tvctl-voice"))),
 		},

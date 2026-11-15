@@ -44,6 +44,8 @@ recent_chars = 6000
 
 [paths]
 # memory = "~/Library/Application Support/tvctl-agent/conversation.jsonl"
+# Lasting notes the agent saves when you ask it to remember something (one per line; editable).
+# notes = "~/Library/Application Support/tvctl-agent/notes.txt"
 # tvctl = "tvctl"
 # voice = "<repo>/voice/.build/release/tvctl-voice"
 
