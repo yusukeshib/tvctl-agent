@@ -80,6 +80,7 @@ export class Diagnostics {
 		this.speechStart = new Map();
 		this.responseStartedAt = new Map();
 		this.spoken = new Map();
+		this.speechEndedAt = 0;
 		this.mic.reset();
 		this.audioSentBytes = 0;
 		const recent = /The conversation so far[^\n]*\n([\s\S]*?)\n(?:\n|$)/.exec(instructions)?.[1] ?? "";
@@ -201,7 +202,10 @@ export class Diagnostics {
 				this.trace?.write("agent", {
 					type: "agent.context",
 					response_id: id,
-					items: items.map((i) => ({ id: i.id, role: i.role ?? i.type, text: clip(i.text, 120), ...(i.truncatedMs !== undefined ? { truncated_ms: i.truncatedMs } : {}) })),
+					// Full text: this is what the model had. A truncated answer has lost its transcript on the server.
+					items: items.map((i) =>
+						i.truncatedMs !== undefined ? { id: i.id, role: i.role ?? i.type, text: "", truncated_ms: i.truncatedMs } : { id: i.id, role: i.role ?? i.type, text: i.text },
+					),
 				});
 				break;
 			}

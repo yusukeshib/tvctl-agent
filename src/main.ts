@@ -22,8 +22,18 @@ function flag(name: string): string | undefined {
 
 const configPath = flag("--config") ?? defaultConfigPath;
 const config = await loadConfig(configPath);
-const trace = config.log.trace ? new Trace({ dir: config.log.dir, audio: config.log.audio, keepDays: config.log.keepDays }) : undefined;
+// The trace is optional: a storage failure (unwritable directory, full disk) must not stop the agent.
+let trace: Trace | undefined;
+let traceError: string | undefined;
+if (config.log.trace) {
+	try {
+		trace = new Trace({ dir: config.log.dir, audio: config.log.audio, keepDays: config.log.keepDays });
+	} catch (error) {
+		traceError = (error as Error).message;
+	}
+}
 const diagnostics = new Diagnostics(trace);
+if (traceError !== undefined) diagnostics.note("main", `trace disabled: ${traceError}`);
 const { realtime: rt, audio } = config;
 diagnostics.note(
 	"main",

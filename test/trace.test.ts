@@ -96,6 +96,29 @@ test("diagnostics trace a turn and log readable lines", () => {
 	assert.equal(readFileSync(join(trace.dir, "audio", "s1-u1-user.wav")).length, 44 + 800 * 48);
 });
 
+test("context snapshots keep full text and drop truncated transcripts; latency resets per session", () => {
+	const trace = new Trace({ dir: mkdtempSync(join(tmpdir(), "trace-")), audio: false, keepDays: 14 });
+	const lines: string[] = [];
+	const d = new Diagnostics(trace, (scope, message) => lines.push(`[${scope}] ${message}`));
+	const long = "あ".repeat(300);
+	d.connected(1, "m", "Hi");
+	d.server({ type: "input_audio_buffer.speech_stopped", audio_end_ms: 900, item_id: "u1" });
+	d.server({ type: "conversation.item.added", item: { id: "u1", type: "message", role: "user", content: [{ type: "input_text", text: long }] } });
+	d.server({ type: "conversation.item.added", item: { id: "a1", type: "message", role: "assistant", content: [] } });
+	d.server({ type: "response.output_audio_transcript.done", item_id: "a1", transcript: "長い返事" });
+	d.server({ type: "conversation.item.truncated", item_id: "a1", audio_end_ms: 300 });
+	d.server({ type: "response.created", response: { id: "r2" } });
+	const context = events(trace).find((e) => e.type === "agent.context") as { items: Record<string, unknown>[] };
+	assert.deepEqual(context.items, [
+		{ id: "u1", role: "user", text: long },
+		{ id: "a1", role: "assistant", text: "", truncated_ms: 300 },
+	]);
+	// The user spoke in session 1; audio in session 2 is not an answer to it.
+	d.connected(2, "m", "Hi");
+	d.server({ type: "response.output_audio.delta", item_id: "a2", delta: Buffer.alloc(480).toString("base64") });
+	assert.ok(lines.includes("[response] first audio of a2 without user speech"));
+});
+
 test("log config defaults", () => {
 	const config = parseConfig("[log]\naudio = true\n");
 	assert.equal(config.log.trace, true);
